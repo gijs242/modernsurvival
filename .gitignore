@@ -1,2 +1,7 @@
-node_modules/
+# Godot
+.godot/
+*.translation
+export_presets.cfg.bak
+/build/
+/export/
 .DS_Store
