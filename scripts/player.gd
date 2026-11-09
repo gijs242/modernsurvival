@@ -353,7 +353,7 @@ func _local_frame(dt: float) -> void:
 	if designating != "":
 		_update_designator()
 	# recoil recovery
-	recoil = recoil.lerp(Vector2.ZERO, min(1.0, dt * 7.0))
+	recoil = recoil.lerp(Vector2.ZERO, min(1.0, dt * 4.5))
 	flinch = flinch.lerp(Vector2.ZERO, min(1.0, dt * 10.0))
 	_move(dt, input_ok)
 	_update_camera(dt)
@@ -555,11 +555,13 @@ func _try_fire() -> void:
 	Sfx.play(cur, -1.0, 1.0, 0.04)
 	_muzzle_fx(muzzle_pos, fwd)
 	# recoil & kick
-	var rec: float = w.recoil * (0.55 if ads > 0.5 else 1.0) * (0.75 if crouch else 1.0)
-	recoil.y += rec * 0.011
-	recoil.x += randf_range(-1.0, 1.0) * rec * 0.005
-	pitch += rec * 0.0035      # some permanent climb
-	kick += rec * 0.5
+	var rec: float = w.recoil * (0.6 if ads > 0.5 else 1.0) * (0.8 if crouch else 1.0)
+	recoil.y += rec * 0.028                                  # camera kick (recovers)
+	recoil.x += randf_range(-1.0, 1.0) * rec * 0.012
+	pitch += rec * 0.009                                     # muzzle climb you have to pull down
+	yaw += randf_range(-0.6, 1.0) * rec * 0.0035
+	kick += rec * 0.9
+	game.fx.shake = max(game.fx.shake, rec * 0.06)
 	if w.get("rocket", false):
 		game.send({"t": "rocket", "o": origin + fwd * 0.9, "d": fwd})
 		return
@@ -746,9 +748,11 @@ func _update_viewmodel(dt: float) -> void:
 	pos.y += sway.y * 0.6 * (1.0 - ads * 0.8)
 	rot.y += sway.x * 2.0
 	rot.x += sway.y * 2.0
-	kick = lerpf(kick, 0.0, min(1.0, dt * 14.0))
-	pos.z += kick * 0.045
-	rot.x += kick * 0.06
+	kick = lerpf(kick, 0.0, min(1.0, dt * 11.0))
+	pos.z += kick * 0.05
+	pos.y += kick * 0.008
+	rot.x += kick * 0.09
+	rot.z += kick * randf_range(-0.02, 0.02)
 	if sprinting:
 		pos += Vector3(-0.05, -0.05, 0.02)
 		rot += Vector3(-0.35, 0.65, 0.25)
@@ -810,7 +814,7 @@ func _update_interaction() -> void:
 			if Input.is_action_pressed("interact") and _input_enabled():
 				revive_target = pn.peer_id
 			return
-	var st := game.map.station_near(global_position)
+	var st := game.map.station_near(global_position, 2.2)
 	if not st.is_empty():
 		interact_prompt = "Press [E] to open the %s" % Defs.CAT_NAMES[st.cat]
 
@@ -818,9 +822,10 @@ func _update_interaction() -> void:
 func _interact() -> void:
 	if dead or downed:
 		return
-	var st := game.map.station_near(global_position)
+	var st := game.map.station_near(global_position, 2.2)
 	if not st.is_empty() and game.hud:
 		game.hud.open_shop(st.cat)
+		get_viewport().set_input_as_handled()   # otherwise main.gd sees the same E press and closes it again
 
 
 func _send_state(dt: float) -> void:

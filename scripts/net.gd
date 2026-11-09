@@ -38,7 +38,8 @@ func _ready() -> void:
 func is_dedicated() -> bool:
 	if OS.has_feature("dedicated_server"):
 		return true
-	return args.has("server") or DisplayServer.get_name() == "headless" and not args.has("autotest") and not args.has("join")
+	var dev_mode := args.has("autotest") or args.has("selftest") or args.has("shots") or args.has("join")
+	return args.has("server") or DisplayServer.get_name() == "headless" and not dev_mode
 
 
 func start_sp() -> void:

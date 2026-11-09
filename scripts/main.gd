@@ -52,7 +52,7 @@ func _ready() -> void:
 	if Net.args.has("join"):
 		name_edit.text = Net.player_name
 		_join(str(Net.args.join), Net.port)
-	elif Net.args.has("autotest") or Net.args.has("shots"):
+	elif Net.args.has("autotest") or Net.args.has("shots") or Net.args.has("selftest"):
 		_start_sp()
 
 
@@ -465,7 +465,9 @@ func _notification(what: int) -> void:
 
 
 func _process(dt: float) -> void:
-	if Net.args.has("shots"):
+	if Net.args.has("selftest"):
+		_selftest(dt)
+	elif Net.args.has("shots"):
 		_shots(dt)
 	elif autotest_t > 0.0:
 		_autotest(dt)
@@ -589,3 +591,98 @@ func _autotest(dt: float) -> void:
 	if _at_elapsed >= autotest_t:
 		print("[autotest] DONE wave=%d kills=%d (%s)" % [game.snap.get("wave", 0), p.get("kills", p.get("k", 0)), Net.mode])
 		get_tree().quit(0)
+
+
+# ======================================================================= regression self-test (dev tool)
+var _st_t := 0.0
+var _st_step := 0
+var _st_fail := 0
+var _st_enemy: Enemy
+var _st_body: Soldier
+var _st_pitch := 0.0
+
+func _st_check(name: String, ok: bool, detail := "") -> void:
+	print("[selftest] %s %s %s" % ["PASS" if ok else "FAIL", name, detail])
+	if not ok:
+		_st_fail += 1
+
+func _st_key(code: Key, pressed: bool) -> void:
+	var e := InputEventKey.new()
+	e.physical_keycode = code
+	e.keycode = code
+	e.pressed = pressed
+	Input.parse_input_event(e)
+
+func _selftest(dt: float) -> void:
+	_st_t += dt
+	if game == null:
+		return
+	var lp: Player = game.player_nodes.get(game.local_id)
+	var p: Dictionary = game.P.get(game.local_id, {})
+	if lp == null or p.is_empty():
+		return
+	p.hp = 100.0
+	game.timer = 99.0
+	match _st_step:
+		0:
+			if _st_t > 1.0:
+				lp.global_position = Vector3(-4.6, 0.05, -23.4)
+				lp.yaw = 0.0
+				_st_step = 1
+		1:
+			if _st_t > 1.5:
+				_st_key(KEY_E, true)
+				_st_step = 2
+		2:
+			if _st_t > 1.7:
+				_st_key(KEY_E, false)
+				_st_step = 3
+		3:
+			if _st_t > 2.2:
+				_st_check("shop opens with E at the weapon station", hud.shop_open, "prompt='%s'" % lp.interact_prompt)
+				_st_key(KEY_E, true)
+				_st_step = 4
+		4:
+			if _st_t > 2.4:
+				_st_key(KEY_E, false)
+				_st_step = 5
+		5:
+			if _st_t > 2.8:
+				_st_check("E closes the shop again", not hud.shop_open)
+				Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
+				lp.global_position = Vector3(0, 0.05, 4)
+				_st_pitch = lp.pitch
+				lp.fire_cd = 0.0
+				lp._try_fire()
+				_st_step = 6
+		6:
+			if _st_t > 2.85:
+				var kick_deg := rad_to_deg(lp.recoil.y + lp.pitch - _st_pitch)
+				_st_check("one pistol shot kicks the camera noticeably", kick_deg > 1.0, "kick=%.2f deg" % kick_deg)
+				# spawn a hostile in front of the player and kill it
+				game._spawn_enemy("rifleman")
+				_st_enemy = game.enemies.values()[game.enemies.size() - 1]
+				_st_enemy.global_position = Vector3(0, 0.05, -2)
+				_st_step = 7
+		7:
+			if _st_t > 3.2:
+				game._damage_enemy(_st_enemy, 9999.0, p, {"head": true})
+				_st_step = 8
+		8:
+			if _st_t > 3.4:
+				for c in game.enemies_root.get_children():
+					if c is Soldier and c.dead:
+						_st_body = c
+				_st_check("killed enemy becomes a corpse", _st_body != null)
+				_st_check("enemy removed from the live list", not game.enemies.has(_st_enemy.id) if is_instance_valid(_st_enemy) else true)
+				_st_step = 9
+		9:
+			if _st_t > 4.6:
+				var tilt: float = abs(_st_body.rotation.x) if is_instance_valid(_st_body) else 0.0
+				_st_check("corpse falls over", tilt > 1.2, "tilt=%.2f rad" % tilt)
+				_st_step = 10
+		10:
+			if _st_t > 17.0:
+				_st_check("corpse disappears after ~12 s", not is_instance_valid(_st_body))
+				print("[selftest] DONE failures=%d" % _st_fail)
+				get_tree().quit(_st_fail)

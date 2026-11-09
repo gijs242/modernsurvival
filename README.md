@@ -196,7 +196,19 @@ assets/                CC0 textures (ambientCG), HDRI + props (Poly Haven)
 tools/fetch_assets.py  re-download / change the CC0 assets
 ```
 
-## 6. Troubleshooting
+## 6. Automated checks (for development)
+
+```bash
+godot --headless --path . --fixed-fps 60 -- --selftest
+```
+Opens/closes a shop with E, fires to check recoil, and kills an enemy to check the death animation and corpse cleanup.
+
+```bash
+godot --headless --path . --fixed-fps 60 -- --autotest 120
+```
+Plays two minutes of scripted waves (buying, shooting, every support item) and reports progress.
+
+## 7. Troubleshooting
 
 - **Black or very slow screen**: choose *Low* or *Medium* graphics in the menu. *High/Ultra* use SDFGI and volumetric
   fog, which need a reasonably modern GPU (GTX 1060 / RX 580 or better recommended for High).

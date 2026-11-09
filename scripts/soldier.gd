@@ -324,8 +324,7 @@ func animate(dt: float, mv: bool, speed: float, state: int, t: float) -> void:
 		if flash.visible:
 			flash.rotation.z = randf() * TAU
 	if dead:
-		_animate_death(dt)
-		return
+		return   # death is animated by _process once the body is detached
 	if rig:
 		if downed:
 			_play("death")
@@ -357,6 +356,11 @@ func animate(dt: float, mv: bool, speed: float, state: int, t: float) -> void:
 		position.y = lerp(position.y, 0.25, dt * 6.0)
 	elif rotation.x != 0.0:
 		rotation.x = lerp(rotation.x, 0.0, dt * 6.0)
+
+
+func _process(dt: float) -> void:
+	if dead:
+		_animate_death(dt)
 
 
 func muzzle_flash() -> void:
