@@ -67,12 +67,21 @@ static func build(id: String) -> Node3D:
 		"pistol":
 			var model := _gltf("res://assets/props/service_pistol/service_pistol.gltf")
 			if model:
-				# Poly Haven service pistol: barrel along +X, ~24 cm long.
+				# Poly Haven service pistol: the file holds two variants side by side plus loose parts.
+				# Keep the wood-grip variant (*_b, offset +0.15 m in Y), barrel along +X.
+				for c in model.get_children():
+					var n := String(c.name)
+					if not n.ends_with("_b") and n != "service_pistol_magazine_loaded":
+						c.queue_free()
+				var mg: Node3D = model.get_node_or_null("service_pistol_magazine_loaded")
+				if mg:
+					mg.position = Vector3(-0.012, 0.142, 0)
+					mg.rotation.z = 0.22
+					mag = mg
 				model.rotation.y = PI / 2
-				model.position = Vector3(0, 0.0, 0.03)
-				model.scale = Vector3.ONE * 0.95
+				model.position = Vector3(0, -0.15, 0.0)
 				g.add_child(model)
-				muzzle.position = Vector3(0, 0.05, -0.17)
+				muzzle.position = Vector3(0, 0.062, -0.18)
 			else:
 				_box(g, _gm, Vector3(0.034, 0.036, 0.2), Vector3(0, 0.055, -0.06))
 				_box(g, _poly, Vector3(0.032, 0.03, 0.17), Vector3(0, 0.026, -0.05))
@@ -171,6 +180,7 @@ static func build(id: String) -> Node3D:
 	g.set_meta("muzzle", muzzle)
 	g.set_meta("eject", eject)
 	g.set_meta("mag", mag)
+	g.set_meta("grip_r", Vector3.ZERO)
 	if mag:
 		g.set_meta("mag_pos", mag.position)
 	return g
@@ -182,31 +192,69 @@ static func _gltf(path: String) -> Node3D:
 	return (load(path) as PackedScene).instantiate()
 
 
-## Drop-in custom weapon: res://assets/weapons/<id>.glb|.gltf, with optional child nodes
-## named "Muzzle", "Mag", "Eject". Model must point down -Z with the grip at the origin.
+## Custom weapon model: res://assets/weapons/<id>.glb|.gltf (made by tools/convert_weapons.py, or your own).
+## Convention: barrel down -Z, +Y up, metres, origin on the sight line above the grip.
+## Optional child nodes: Muzzle, Mag, Eject, GripR, GripL. Materials named gun_metal / gun_polymer / gun_wood
+## are replaced with the game's PBR gun materials.
+static var _gun_mats := {}
+
+static func _gun_mat(kind: String) -> StandardMaterial3D:
+	if _gun_mats.has(kind):
+		return _gun_mats[kind]
+	var m: StandardMaterial3D
+	match kind:
+		"gun_polymer":
+			m = Mat.pbr("fabric", Color(0.075, 0.075, 0.08), 0.8).duplicate()
+			m.uv1_scale = Vector3.ONE * 14.0
+		"gun_wood":
+			m = Mat.pbr("planks", Color(0.7, 0.55, 0.42), 0.6).duplicate()
+			m.uv1_scale = Vector3.ONE * 2.0
+		_:
+			m = Mat.pbr("painted_metal", Color(0.085, 0.088, 0.095), 0.55, 0.0).duplicate()
+			m.metallic = 0.7
+			m.uv1_scale = Vector3.ONE * 3.0
+	m.uv1_triplanar = true
+	m.uv1_world_triplanar = false
+	m.uv1_triplanar_sharpness = 4.0
+	_gun_mats[kind] = m
+	return m
+
+
 static func _custom(id: String) -> Node3D:
 	for ext in ["glb", "gltf"]:
 		var path := "res://assets/weapons/%s.%s" % [id, ext]
-		if ResourceLoader.exists(path):
-			var root := Node3D.new()
-			root.name = id
-			var model := _gltf(path)
-			root.add_child(model)
-			var muzzle: Node3D = model.find_child("Muzzle", true, false)
-			if muzzle == null:
-				muzzle = Node3D.new()
-				muzzle.position = Vector3(0, 0.05, -0.6)
-				root.add_child(muzzle)
-			var eject: Node3D = model.find_child("Eject", true, false)
-			if eject == null:
-				eject = Node3D.new()
-				eject.position = Vector3(0.03, 0.06, -0.05)
-				root.add_child(eject)
-			var mag: Node3D = model.find_child("Mag", true, false)
-			root.set_meta("muzzle", muzzle)
-			root.set_meta("eject", eject)
-			root.set_meta("mag", mag)
-			if mag:
-				root.set_meta("mag_pos", mag.position)
-			return root
+		if not ResourceLoader.exists(path):
+			continue
+		var root := Node3D.new()
+		root.name = id
+		var model := _gltf(path)
+		root.add_child(model)
+		for mi in model.find_children("*", "MeshInstance3D", true, false):
+			var m := mi as MeshInstance3D
+			for i in m.mesh.get_surface_count():
+				var mat := m.mesh.surface_get_material(i)
+				if mat and String(mat.resource_name).begins_with("gun_"):
+					m.set_surface_override_material(i, _gun_mat(String(mat.resource_name).get_slice(".", 0)))
+		var muzzle: Node3D = model.find_child("Muzzle", true, false)
+		if muzzle == null:
+			muzzle = Node3D.new()
+			muzzle.position = Vector3(0, -0.03, -0.6)
+			root.add_child(muzzle)
+		var eject: Node3D = model.find_child("Eject", true, false)
+		if eject == null:
+			eject = Node3D.new()
+			eject.position = Vector3(0.03, -0.02, -0.05)
+			root.add_child(eject)
+		var mag: Node3D = model.find_child("Mag", true, false)
+		var gr: Node3D = model.find_child("GripR", true, false)
+		var gl: Node3D = model.find_child("GripL", true, false)
+		root.set_meta("muzzle", muzzle)
+		root.set_meta("eject", eject)
+		root.set_meta("mag", mag)
+		root.set_meta("custom", true)
+		root.set_meta("grip_r", gr.position if gr else Vector3(0, -0.08, 0))
+		root.set_meta("grip_l", gl.position if gl else Vector3(0, -0.05, -0.3))
+		if mag:
+			root.set_meta("mag_pos", mag.position)
+		return root
 	return null

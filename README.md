@@ -128,8 +128,8 @@ Tweak anything in `scripts/defs.gd` (weapon stats, prices, unlocks, enemy stats)
 Everything already works with the bundled CC0 assets: real PBR textures for the ground, walls, buildings,
 containers, sandbags and vehicles, an HDRI sky, and Poly Haven props (concrete road barriers, military crates,
 barrels, covered cars, street lamps, jerry cans, an ammo box and a real 3D-scanned service pistol used as your sidearm).
-Soldiers and most rifles are procedural (camo-shaded, animated in code). The biggest visual upgrade is swapping
-those for rigged characters and detailed gun models. The code already supports this — just drop files in:
+All guns are real 3D models (free OpenGameArt / Poly Haven assets, credited below). Soldiers are procedural
+(camo-shaded, animated in code); the biggest remaining visual upgrade is rigged characters. The code already supports this — just drop files in:
 
 ### Realistic animated soldiers (free, ~15 minutes) — Mixamo
 1. Go to <https://www.mixamo.com> and sign in with a free Adobe account.
@@ -152,11 +152,12 @@ those for rigged characters and detailed gun models. The code already supports t
    attaches the weapon to the right hand bone and blends the clips automatically. If the gun sits wrong in the hand,
    adjust the rotation in `scripts/soldier.gd` → `_try_custom()` (`gun.rotation = ...`).
 
-### Detailed weapon models
-Put a model at `assets/weapons/<id>.glb` (ids: `smg`, `shotgun`, `ar`, `dmr`, `lmg`, `launcher`, and `pistol` to replace the scanned pistol).
-- The model must point down **-Z** with the pistol grip at the origin, real-world scale (metres).
-- Optionally add empty child nodes named `Muzzle`, `Mag` and `Eject` in Blender — the muzzle flash, reload animation and
-  shell ejection then use them.
+### Swapping a weapon model
+Each gun is `assets/weapons/<id>.glb` (ids: `smg`, `shotgun`, `ar`, `dmr`, `lmg`, `launcher`, `frag`; add `pistol` to replace the scanned pistol).
+- Easiest: add your source file to `tools/convert_weapons.py` (one line per gun) and run it with Blender — it orients, scales,
+  and adds all the markers for you.
+- By hand: barrel down **-Z**, +Y up, metres, origin on the sight line above the grip, with optional empty child nodes
+  `Muzzle`, `Mag`, `Eject`, `GripR`, `GripL`.
 - Good sources: Sketchfab (filter *Downloadable* + licence *CC0* or *CC-BY*, credit the authors), or paid packs on the Unity Asset Store / Fab
   that allow use in other engines.
 
@@ -206,6 +207,13 @@ tools/fetch_assets.py  re-download / change the CC0 assets
 ## Credits & licences
 
 - Textures: [ambientCG](https://ambientcg.com) — CC0.
+- Weapon models (converted with `tools/convert_weapons.py`, sources via `tools/fetch_weapons.py`):
+  - M4 carbine + EOTech sight, pump shotgun — "FPS Weapons" by **biglew**, [OpenGameArt](https://opengameart.org/content/fps-weapons), CC-BY-SA 3.0
+  - SMG — "Bullpup submachine gun" by **kutejnikov**, [OpenGameArt](https://opengameart.org/content/bullpup-submachine-gun), CC-BY 4.0
+  - M60 — by **mightydinosaurcol**, [OpenGameArt](https://opengameart.org/content/m60-machine-gun), CC-BY 4.0
+  - RPG-7 — by **lucian-pavel**, [OpenGameArt](https://opengameart.org/content/low-poly-rpg7), CC0
+  - MK2 grenade — by **lonesomeducky**, [OpenGameArt](https://opengameart.org/content/mk2-grenade), CC0
+  - Bolt-action sniper rifle and service pistol — [Poly Haven](https://polyhaven.com), CC0
 - HDRI sky and props (barriers, crates, barrels, lamp, car, jerrycan, ammo box, service pistol, etc.): [Poly Haven](https://polyhaven.com) — CC0.
 - Engine: [Godot Engine](https://godotengine.org) — MIT.
 - Everything else (code, procedural models, sounds) is part of this project.

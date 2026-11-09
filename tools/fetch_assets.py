@@ -35,7 +35,7 @@ MAPS = {"_Color.jpg": "albedo.jpg", "_NormalGL.jpg": "normal.jpg", "_Roughness.j
 HDRI = "kloofendal_48d_partly_cloudy_puresky"
 MODELS = ["concrete_road_barrier", "barrel_03", "old_military_crate", "wooden_crate_01", "ammo_box",
           "metal_jerrycan_green", "street_lamp_01", "utility_box_01", "wooden_military_crate", "service_pistol",
-          "modular_chainlink_fence", "covered_car", "plastic_crate_01"]
+          "modular_chainlink_fence", "covered_car", "plastic_crate_01", "bolt_action_rifle_7_62"]
 
 
 def get(url):

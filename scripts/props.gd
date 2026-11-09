@@ -37,6 +37,9 @@ static func steel() -> StandardMaterial3D:
 
 
 static func frag() -> Node3D:
+	var real := WeaponModel._custom("frag")
+	if real:
+		return real
 	var g := Node3D.new()
 	var s := SphereMesh.new()
 	s.radius = 0.05

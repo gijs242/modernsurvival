@@ -101,6 +101,7 @@ func _ready() -> void:
 	minimap.size = Vector2(200, 200)
 	minimap.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	minimap.draw.connect(_draw_minimap)
+	minimap.clip_contents = true
 	add_child(minimap)
 
 	# top-right: money
@@ -222,7 +223,7 @@ func _ready() -> void:
 	# bottom-right: weapon + ammo + equipment
 	var br := VBoxContainer.new()
 	br.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_RIGHT)
-	br.offset_left = -520
+	br.offset_left = -700
 	br.offset_top = -200
 	br.offset_right = -28
 	br.offset_bottom = -24
@@ -243,7 +244,7 @@ func _ready() -> void:
 	equip_lbl.fit_content = true
 	equip_lbl.scroll_active = false
 	equip_lbl.add_theme_font_override("normal_font", font)
-	equip_lbl.add_theme_font_size_override("normal_font_size", 17)
+	equip_lbl.add_theme_font_size_override("normal_font_size", 15)
 	equip_lbl.add_theme_constant_override("outline_size", 4)
 	equip_lbl.add_theme_color_override("font_outline_color", Color(0, 0, 0, 0.8))
 	equip_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE

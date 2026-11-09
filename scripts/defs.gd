@@ -2,25 +2,25 @@ extends Node
 ## Shared game data: weapons, enemies, shop catalogue, economy. Autoloaded as `Defs`.
 
 const WEAPONS := {
-	"pistol": {"name": "Kestrel 9mm", "cls": "Sidearm", "dmg": 30.0, "rpm": 420.0, "auto": false, "mag": 15, "reserve": -1,
+	"pistol": {"name": "P38 Service Pistol", "cls": "Sidearm", "dmg": 30.0, "rpm": 420.0, "auto": false, "mag": 15, "reserve": -1,
 		"reload": 1.3, "spread": 0.010, "ads_spread": 0.002, "bloom": 0.012, "recoil": 1.1, "pellets": 1, "head": 2.2,
 		"falloff": [18.0, 45.0, 0.6], "zoom": 1.2, "move": 1.0},
-	"smg": {"name": "Wasp SMG", "cls": "Submachine gun", "dmg": 24.0, "rpm": 880.0, "auto": true, "mag": 32, "reserve": 224,
+	"smg": {"name": "Mk II SMG", "cls": "Submachine gun", "dmg": 24.0, "rpm": 880.0, "auto": true, "mag": 32, "reserve": 224,
 		"reload": 1.9, "spread": 0.022, "ads_spread": 0.006, "bloom": 0.006, "recoil": 0.55, "pellets": 1, "head": 1.8,
 		"falloff": [14.0, 35.0, 0.5], "zoom": 1.25, "move": 1.0},
-	"shotgun": {"name": "Breacher 12G", "cls": "Shotgun", "dmg": 22.0, "rpm": 78.0, "auto": false, "mag": 7, "reserve": 49,
+	"shotgun": {"name": "Pump Shotgun", "cls": "Shotgun", "dmg": 22.0, "rpm": 78.0, "auto": false, "mag": 7, "reserve": 49,
 		"reload": 2.6, "spread": 0.075, "ads_spread": 0.055, "bloom": 0.0, "recoil": 3.2, "pellets": 9, "head": 1.4,
 		"falloff": [7.0, 22.0, 0.2], "zoom": 1.15, "move": 0.96},
-	"ar": {"name": "Ranger AR", "cls": "Assault rifle", "dmg": 36.0, "rpm": 680.0, "auto": true, "mag": 30, "reserve": 210,
+	"ar": {"name": "M4 Carbine", "cls": "Assault rifle", "dmg": 36.0, "rpm": 680.0, "auto": true, "mag": 30, "reserve": 210,
 		"reload": 2.2, "spread": 0.016, "ads_spread": 0.0025, "bloom": 0.005, "recoil": 0.8, "pellets": 1, "head": 2.0,
 		"falloff": [30.0, 70.0, 0.7], "zoom": 1.45, "move": 0.95},
-	"dmr": {"name": "Longbow DMR", "cls": "Marksman rifle", "dmg": 110.0, "rpm": 190.0, "auto": false, "mag": 10, "reserve": 70,
-		"reload": 2.6, "spread": 0.03, "ads_spread": 0.0004, "bloom": 0.02, "recoil": 2.4, "pellets": 1, "head": 2.5,
+	"dmr": {"name": "Bolt-Action Sniper", "cls": "Sniper rifle", "dmg": 165.0, "rpm": 48.0, "auto": false, "mag": 5, "reserve": 45,
+		"reload": 3.0, "spread": 0.04, "ads_spread": 0.0003, "bloom": 0.03, "recoil": 3.0, "pellets": 1, "head": 2.6,
 		"falloff": [60.0, 120.0, 0.85], "zoom": 3.2, "move": 0.92, "scope": true},
-	"lmg": {"name": "Bulwark LMG", "cls": "Light machine gun", "dmg": 40.0, "rpm": 760.0, "auto": true, "mag": 100, "reserve": 300,
+	"lmg": {"name": "M60 LMG", "cls": "Light machine gun", "dmg": 40.0, "rpm": 760.0, "auto": true, "mag": 100, "reserve": 300,
 		"reload": 4.6, "spread": 0.024, "ads_spread": 0.006, "bloom": 0.004, "recoil": 0.75, "pellets": 1, "head": 1.8,
 		"falloff": [35.0, 80.0, 0.75], "zoom": 1.4, "move": 0.85},
-	"launcher": {"name": "Ravager RL", "cls": "Rocket launcher", "dmg": 0.0, "rpm": 40.0, "auto": false, "mag": 1, "reserve": 7,
+	"launcher": {"name": "RPG-7", "cls": "Rocket launcher", "dmg": 0.0, "rpm": 40.0, "auto": false, "mag": 1, "reserve": 7,
 		"reload": 3.0, "spread": 0.01, "ads_spread": 0.001, "bloom": 0.0, "recoil": 4.0, "pellets": 0, "head": 1.0,
 		"falloff": [999.0, 999.0, 1.0], "zoom": 1.3, "move": 0.85, "rocket": true},
 }
@@ -35,12 +35,12 @@ const ENEMIES := {
 
 ## `after` = number of completed waves before the item unlocks.
 const SHOP := [
-	{"id": "w_smg", "cat": "weapons", "name": "Wasp SMG", "desc": "Fast-firing, great up close", "price": 1000, "after": 0, "weapon": "smg"},
-	{"id": "w_shotgun", "cat": "weapons", "name": "Breacher 12G", "desc": "Pump shotgun, devastating at short range", "price": 1200, "after": 0, "weapon": "shotgun"},
-	{"id": "w_ar", "cat": "weapons", "name": "Ranger AR", "desc": "Accurate all-round assault rifle", "price": 2200, "after": 2, "weapon": "ar"},
-	{"id": "w_dmr", "cat": "weapons", "name": "Longbow DMR", "desc": "Scoped semi-auto, huge headshot damage", "price": 3000, "after": 6, "weapon": "dmr"},
-	{"id": "w_lmg", "cat": "weapons", "name": "Bulwark LMG", "desc": "100-round belt of sustained fire", "price": 4500, "after": 8, "weapon": "lmg"},
-	{"id": "w_launcher", "cat": "weapons", "name": "Ravager RL", "desc": "High-explosive rockets", "price": 5500, "after": 10, "weapon": "launcher"},
+	{"id": "w_smg", "cat": "weapons", "name": "Mk II SMG", "desc": "Fast-firing, great up close", "price": 1000, "after": 0, "weapon": "smg"},
+	{"id": "w_shotgun", "cat": "weapons", "name": "Pump Shotgun", "desc": "Pump shotgun, devastating at short range", "price": 1200, "after": 0, "weapon": "shotgun"},
+	{"id": "w_ar", "cat": "weapons", "name": "M4 Carbine", "desc": "Accurate all-round assault rifle with holographic sight", "price": 2200, "after": 2, "weapon": "ar"},
+	{"id": "w_dmr", "cat": "weapons", "name": "Bolt-Action Sniper", "desc": "Scoped rifle, one-shot headshots", "price": 3000, "after": 6, "weapon": "dmr"},
+	{"id": "w_lmg", "cat": "weapons", "name": "M60 LMG", "desc": "100-round belt of sustained fire", "price": 4500, "after": 8, "weapon": "lmg"},
+	{"id": "w_launcher", "cat": "weapons", "name": "RPG-7", "desc": "High-explosive rockets", "price": 5500, "after": 10, "weapon": "launcher"},
 
 	{"id": "e_ammo", "cat": "equipment", "name": "Ammo Refill", "desc": "Tops up reserve ammo for all weapons", "price": 350, "after": 0},
 	{"id": "e_frag", "cat": "equipment", "name": "Frag Grenades x2", "desc": "Throw with G (max 4)", "price": 400, "after": 0},

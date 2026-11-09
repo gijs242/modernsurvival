@@ -475,13 +475,17 @@ func _process(dt: float) -> void:
 var _shot_t := 0.0
 var _shot_i := 0
 const SHOT_POSES := [
-	# [time, pos, yaw, pitch, name, ads]
-	[3.0, Vector3(0, 0, 6), 0.0, 0.02, "spawn_armory", false],
-	[5.0, Vector3(-1.5, 0, -15.5), 0.08, 0.05, "armory", false],
-	[7.0, Vector3(4.6, 0, -23.0), 0.0, -0.1, "station", false],
-	[9.0, Vector3(-5, 0, 3), -2.3, 0.04, "yard", false],
-	[11.0, Vector3(20, 0, -3), 2.1, 0.0, "containers", false],
-	[13.0, Vector3(0, 0, -4), PI, 0.0, "ads", true],
+	# [time, pos, yaw, pitch, name, ads, weapon]
+	[3.0, Vector3(0, 0, 6), 0.0, 0.02, "spawn_armory", false, "pistol"],
+	[4.5, Vector3(-5, 0, 3), -2.3, 0.0, "ar_hip", false, "ar"],
+	[6.0, Vector3(-5, 0, 3), -2.3, 0.0, "ar_ads", true, "ar"],
+	[7.5, Vector3(-5, 0, 3), -2.3, 0.0, "smg_hip", false, "smg"],
+	[9.0, Vector3(-5, 0, 3), -2.3, 0.0, "shotgun_hip", false, "shotgun"],
+	[10.5, Vector3(-5, 0, 3), -2.3, 0.0, "lmg_hip", false, "lmg"],
+	[12.0, Vector3(-5, 0, 3), -2.3, 0.0, "launcher_hip", false, "launcher"],
+	[13.5, Vector3(-5, 0, 3), -2.3, 0.0, "dmr_hip", false, "dmr"],
+	[15.0, Vector3(4.6, 0, -23.0), 0.0, -0.1, "station", false, "pistol"],
+	[16.5, Vector3(20, 0, -3), 2.1, 0.0, "containers", false, "ar"],
 ]
 
 func _shots(dt: float) -> void:
@@ -502,10 +506,11 @@ func _shots(dt: float) -> void:
 		lp.yaw = pose[2]
 		lp.pitch = pose[3]
 		lp.ads = 1.0 if pose[5] else 0.0
-		if pose[5] and lp.cur != "ar":
-			p.weapons = ["pistol", "ar"]
+		if lp.cur != pose[6]:
+			p.weapons = ["pistol", pose[6]] if pose[6] != "pistol" else ["pistol"]
 			lp._sync_weapons(p.weapons)
-			lp._equip("ar", true)
+			lp._equip(pose[6], true)
+		lp.swap_t = 0.0
 		if _shot_t >= pose[0]:
 			_capture(pose[4])
 			_shot_i += 1

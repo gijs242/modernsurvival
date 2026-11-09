@@ -152,10 +152,11 @@ func _build_environment(quality: int) -> void:
 	env.background_mode = Environment.BG_SKY
 	env.sky = sky
 	env.ambient_light_source = Environment.AMBIENT_SOURCE_SKY
-	env.ambient_light_energy = 1.0
+	env.ambient_light_energy = 0.55
+	env.ambient_light_sky_contribution = 0.85
 	env.reflected_light_source = Environment.REFLECTION_SOURCE_SKY
 	env.tonemap_mode = Environment.TONE_MAPPER_AGX
-	env.tonemap_exposure = 1.0
+	env.tonemap_exposure = 0.92
 	env.tonemap_white = 6.0
 	# Screen-space effects (scaled by quality: 0 low .. 3 ultra)
 	env.ssao_enabled = quality >= 1
@@ -178,20 +179,20 @@ func _build_environment(quality: int) -> void:
 	# Atmospheric haze
 	env.fog_enabled = true
 	env.fog_light_color = Color(0.62, 0.64, 0.68)
-	env.fog_density = 0.0035
-	env.fog_sky_affect = 0.15
+	env.fog_density = 0.0011
+	env.fog_sky_affect = 0.0
 	env.fog_sun_scatter = 0.15
-	env.fog_aerial_perspective = 0.4
+	env.fog_aerial_perspective = 0.25
 	env.volumetric_fog_enabled = quality >= 2
-	env.volumetric_fog_density = 0.008
+	env.volumetric_fog_density = 0.0025
 	env.volumetric_fog_albedo = Color(0.85, 0.82, 0.78)
 	env.volumetric_fog_anisotropy = 0.6
 	env.volumetric_fog_length = 80.0
 	env.volumetric_fog_ambient_inject = 0.3
 	# Colour grade: a little cooler and more contrasty, MW-style
 	env.adjustment_enabled = true
-	env.adjustment_contrast = 1.08
-	env.adjustment_saturation = 0.88
+	env.adjustment_contrast = 1.14
+	env.adjustment_saturation = 0.95
 	env.adjustment_brightness = 1.0
 	we.environment = env
 	var ca := CameraAttributesPractical.new()
@@ -202,7 +203,7 @@ func _build_environment(quality: int) -> void:
 	sun = DirectionalLight3D.new()
 	sun.name = "Sun"
 	sun.light_color = Color(1.0, 0.95, 0.88)
-	sun.light_energy = 2.2
+	sun.light_energy = 3.0
 	sun.light_angular_distance = 0.6
 	sun.shadow_enabled = true
 	sun.shadow_bias = 0.03
@@ -299,7 +300,7 @@ func _build_ground() -> void:
 	yard.size = Vector2(HALF * 2 + 2, HALF * 2 + 2)
 	var ym := MeshInstance3D.new()
 	ym.mesh = yard
-	ym.material_override = Mat.world("asphalt", Color(0.86, 0.85, 0.83), 0.22)
+	ym.material_override = Mat.world("asphalt", Color(0.72, 0.71, 0.69), 0.22)
 	ym.position.y = 0.002
 	static_root.add_child(ym)
 	var outer := PlaneMesh.new()
@@ -316,7 +317,7 @@ func _build_ground() -> void:
 		if abs(x) > 3:
 			_merge_box(paint, Vector3(2.6, 0.01, 0.18), Vector3(x, 0.006, 0))
 	# Armory pad
-	_merge_box(Mat.world("concrete", Color(0.75, 0.74, 0.72), 0.3), Vector3(18, 0.06, 11), Vector3(0, 0.03, -21))
+	_merge_box(Mat.world("concrete", Color(0.55, 0.54, 0.52), 0.3), Vector3(18, 0.06, 11), Vector3(0, 0.03, -21))
 
 
 func _build_box(b: Dictionary) -> void:
@@ -326,7 +327,7 @@ func _build_box(b: Dictionary) -> void:
 	var add_collision := true
 	match kind:
 		"wall":
-			var m := Mat.world("concrete_wall", Color(0.85, 0.83, 0.8), 0.22)
+			var m := Mat.world("concrete_wall", Color(0.62, 0.6, 0.57), 0.22)
 			_merge_box(m, size, c)
 			_merge_box(Mat.world("concrete", Color(0.55, 0.54, 0.52), 0.3), Vector3(size.x + 0.25, 0.25, size.z + 0.25), Vector3(c.x, b.max.y + 0.12, c.z))
 			var along_x: bool = size.x > size.z
@@ -337,7 +338,7 @@ func _build_box(b: Dictionary) -> void:
 				_merge_box(m, bs, c + (Vector3(t, 0, 0) if along_x else Vector3(0, 0, t)))
 				t += 8.0
 		"bunker", "roof":
-			_merge_box(Mat.world("concrete", Color(0.7, 0.7, 0.68), 0.3), size, c)
+			_merge_box(Mat.world("concrete", Color(0.5, 0.5, 0.48), 0.3), size, c)
 		"building":
 			var tint: Color = [Color(0.92, 0.88, 0.8), Color(1, 1, 1), Color(0.82, 0.8, 0.76), Color(0.9, 0.85, 0.78)][b.tint]
 			var mat := Mat.world("bricks", Color(1, 1, 1), 0.33) if b.tint % 2 == 1 else Mat.world("plaster", tint, 0.25)
@@ -501,10 +502,10 @@ func _build_armory() -> void:
 		# Lit sign on the back wall
 		var sign := Label3D.new()
 		sign.text = st.label
-		sign.font_size = 72
+		sign.font_size = 96
 		sign.outline_size = 0
-		sign.modulate = col * 1.6
-		sign.pixel_size = 0.004
+		sign.modulate = col * 2.5
+		sign.pixel_size = 0.0036
 		sign.position = p + Vector3(0, 2.55, -0.62)
 		sign.shaded = false
 		sign.double_sided = false
@@ -552,7 +553,7 @@ func _build_armory() -> void:
 	# Big ARMORY sign above the bunker
 	var big := Label3D.new()
 	big.text = "ARMORY"
-	big.font_size = 160
+	big.font_size = 120
 	big.modulate = Color(1.0, 0.85, 0.45) * 1.4
 	big.pixel_size = 0.006
 	big.shaded = false

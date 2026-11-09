@@ -208,7 +208,7 @@ func _build() -> void:
 	else:
 		gun = WeaponModel.build(gun_id)
 		gun.scale = Vector3.ONE * 1.1
-		gun.position = Vector3(0.06 * bulk, 0.34, -0.3)
+		gun.position = Vector3(0.06 * bulk, 0.34, -0.3) - (gun.get_meta("grip_r", Vector3.ZERO) as Vector3) * 1.1 + Vector3(0, 0, 0.08 if gun.has_meta("custom") else 0.0)
 		torso.add_child(gun)
 		arms[1].sh.rotation = Vector3(1.0, 0, -0.25)
 		arms[1].el.rotation = Vector3(0.9, 0, 0)

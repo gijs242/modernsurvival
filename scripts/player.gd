@@ -473,38 +473,33 @@ func _build_vm(w: String) -> Node3D:
 		var b := BoxMesh.new()
 		b.size = s
 		return b
-	# right hand on grip
-	var r_arm := Node3D.new()
-	var rh := MeshInstance3D.new()
-	rh.mesh = boxm.call(Vector3(0.05, 0.075, 0.09))
-	rh.material_override = glove
-	rh.position = Vector3(0, -0.02, 0.03)
-	r_arm.add_child(rh)
-	var rs := MeshInstance3D.new()
-	rs.mesh = cap.call(0.045, 0.42)
-	rs.material_override = sleeve
-	rs.rotation.x = PI / 2
-	rs.position = Vector3(0.0, -0.06, 0.25)
-	r_arm.add_child(rs)
-	r_arm.position = Vector3(0.012, -0.02, 0.04)
-	r_arm.rotation = Vector3(-0.35, 0.1, 0)
-	root.add_child(r_arm)
-	# left hand on handguard
-	var l_arm := Node3D.new()
-	var lh := MeshInstance3D.new()
-	lh.mesh = boxm.call(Vector3(0.06, 0.05, 0.1))
-	lh.material_override = glove
-	l_arm.add_child(lh)
-	var ls := MeshInstance3D.new()
-	ls.mesh = cap.call(0.045, 0.44)
-	ls.material_override = sleeve
-	ls.rotation.x = PI / 2
-	ls.position = Vector3(-0.05, -0.05, 0.21)
-	l_arm.add_child(ls)
+	# Hands sit on the gun's grip markers; forearms angle back/down out of the frame.
+	var custom := gun.has_meta("custom")
+	var grip_r: Vector3 = gun.get_meta("grip_r", Vector3.ZERO)
 	var lz: float = {"pistol": 0.01, "smg": -0.22, "shotgun": -0.4, "ar": -0.33, "dmr": -0.36, "lmg": -0.38, "launcher": -0.3, "designator": -0.08}.get(w, -0.3)
-	l_arm.position = Vector3(-0.025 if w == "pistol" else -0.03, -0.03 if w == "pistol" else 0.0, lz)
-	l_arm.rotation = Vector3(-0.35, -0.2, 0.1) if w == "pistol" else Vector3(-0.25, -0.5, 0.3)
-	root.add_child(l_arm)
+	var grip_l: Vector3 = gun.get_meta("grip_l") if custom else Vector3(-0.01, -0.01 if w == "pistol" else 0.03, lz)
+	var make_arm := func(hand: Vector3, back: Vector3, glove_size: Vector3) -> Node3D:
+		var arm := Node3D.new()
+		arm.position = hand
+		var g := MeshInstance3D.new()
+		g.mesh = boxm.call(glove_size)
+		g.material_override = glove
+		arm.add_child(g)
+		var dir := back.normalized()
+		var sl := MeshInstance3D.new()
+		sl.mesh = cap.call(0.042, 0.5)
+		sl.material_override = sleeve
+		var y := dir
+		var x := y.cross(Vector3.FORWARD).normalized()
+		if x.length() < 0.1:
+			x = Vector3.RIGHT
+		var z := x.cross(y).normalized()
+		sl.transform = Transform3D(Basis(x, y, z), dir * 0.27)
+		arm.add_child(sl)
+		root.add_child(arm)
+		return arm
+	make_arm.call(grip_r + Vector3(0.0, -0.01, 0.01), Vector3(0.3, -0.5, 0.85), Vector3(0.05, 0.08, 0.09))
+	var l_arm: Node3D = make_arm.call(grip_l + Vector3(-0.012, -0.012, 0), Vector3(-0.55, -0.55, 0.62), Vector3(0.06, 0.05, 0.11))
 	root.set_meta("gun", gun)
 	root.set_meta("l_arm", l_arm)
 	root.set_meta("l_base", l_arm.position)
@@ -732,6 +727,9 @@ func _update_viewmodel(dt: float) -> void:
 	var w := designating if designating != "" else cur
 	var hip: Vector3 = HIP.get(w, HIP_DEFAULT)
 	var adsp: Vector3 = ADS.get(w, Vector3(0, -0.11, -0.25))
+	if (vm.get_meta("gun") as Node3D).has_meta("custom"):
+		hip = Vector3(0.13, -0.105, -0.3) if w != "launcher" else Vector3(0.16, -0.12, -0.15)
+		adsp = {"shotgun": Vector3(0, 0, -0.16), "launcher": Vector3(0, 0, -0.1), "dmr": Vector3(0, 0, -0.1), "lmg": Vector3(0, 0, -0.14)}.get(w, Vector3(0, 0, -0.2))
 	var pos := hip.lerp(adsp, ads)
 	var rot := Vector3.ZERO
 	var hv := Vector2(velocity.x, velocity.z).length()
