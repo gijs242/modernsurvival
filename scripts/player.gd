@@ -463,7 +463,7 @@ func _build_vm(w: String) -> Node3D:
 	var gun := WeaponModel.build(w)
 	root.add_child(gun)
 	var sleeve := Soldier._camo("vm_sleeve", Soldier.STYLES.friendly.camo)
-	var glove := Mat.pbr("fabric", Color(0.12, 0.12, 0.11), 0.9, 0.0, 4.0)
+	var glove := Mat.pbr("fabric", Color(0.36, 0.31, 0.23), 0.9, 0.0, 4.0)
 	var cap := func(r: float, h: float) -> CapsuleMesh:
 		var c := CapsuleMesh.new()
 		c.radius = r
@@ -482,7 +482,11 @@ func _build_vm(w: String) -> Node3D:
 		var arm := Node3D.new()
 		arm.position = hand
 		var g := MeshInstance3D.new()
-		g.mesh = boxm.call(glove_size)
+		var hm := CapsuleMesh.new()
+		hm.radius = glove_size.x * 0.55
+		hm.height = glove_size.z * 1.1
+		g.mesh = hm
+		g.rotation.x = PI / 2
 		g.material_override = glove
 		arm.add_child(g)
 		var dir := back.normalized()
@@ -785,6 +789,9 @@ func _update_viewmodel(dt: float) -> void:
 		rot.z += 0.25
 	var target := Transform3D(Basis.from_euler(rot), pos)
 	vm.transform = vm.transform.interpolate_with(target, min(1.0, dt * 22.0))
+	var gun_n: Node3D = vm.get_meta("gun")
+	if gun_n.has_meta("reticle"):
+		(gun_n.get_meta("reticle") as Sprite3D).visible = ads > 0.6
 	# scope: hide the gun when fully scoped in on the DMR
 	vm.visible = not (cur == "dmr" and ads > 0.92 and designating == "")
 

@@ -197,6 +197,24 @@ static func _gltf(path: String) -> Node3D:
 ## Optional child nodes: Muzzle, Mag, Eject, GripR, GripL. Materials named gun_metal / gun_polymer / gun_wood
 ## are replaced with the game's PBR gun materials.
 static var _gun_mats := {}
+static var _reticle: ImageTexture
+
+
+## EOTech-style holographic reticle: 65 MOA ring with a centre dot.
+static func _reticle_tex() -> ImageTexture:
+	if _reticle:
+		return _reticle
+	var n := 128
+	var img := Image.create(n, n, false, Image.FORMAT_RGBA8)
+	for y in n:
+		for x in n:
+			var d := Vector2(x - n / 2.0 + 0.5, y - n / 2.0 + 0.5).length()
+			var a := 0.0
+			a = max(a, clamp(1.0 - abs(d - 52.0) / 3.0, 0.0, 1.0))
+			a = max(a, clamp(1.0 - d / 4.0, 0.0, 1.0))
+			img.set_pixel(x, y, Color(1, 1, 1, a))
+	_reticle = ImageTexture.create_from_image(img)
+	return _reticle
 
 static func _gun_mat(kind: String) -> StandardMaterial3D:
 	if _gun_mats.has(kind):
@@ -210,8 +228,9 @@ static func _gun_mat(kind: String) -> StandardMaterial3D:
 			m = Mat.pbr("planks", Color(0.7, 0.55, 0.42), 0.6).duplicate()
 			m.uv1_scale = Vector3.ONE * 2.0
 		_:
-			m = Mat.pbr("painted_metal", Color(0.085, 0.088, 0.095), 0.55, 0.0).duplicate()
-			m.metallic = 0.7
+			m = Mat.pbr("painted_metal", Color(0.06, 0.062, 0.066), 0.6, 0.0).duplicate()
+			m.albedo_texture = null           # keep only the roughness/normal micro-detail, no green paint
+			m.metallic = 0.65
 			m.uv1_scale = Vector3.ONE * 3.0
 	m.uv1_triplanar = true
 	m.uv1_world_triplanar = false
@@ -248,6 +267,17 @@ static func _custom(id: String) -> Node3D:
 		var mag: Node3D = model.find_child("Mag", true, false)
 		var gr: Node3D = model.find_child("GripR", true, false)
 		var gl: Node3D = model.find_child("GripL", true, false)
+		var ret: Node3D = model.find_child("Reticle", true, false)
+		if ret:
+			var dot := Sprite3D.new()
+			dot.texture = _reticle_tex()
+			dot.pixel_size = 0.00012
+			dot.shaded = false
+			dot.modulate = Color(3.0, 0.25, 0.15)
+			dot.alpha_cut = SpriteBase3D.ALPHA_CUT_DISABLED
+			dot.visible = false
+			ret.add_child(dot)
+			root.set_meta("reticle", dot)
 		root.set_meta("muzzle", muzzle)
 		root.set_meta("eject", eject)
 		root.set_meta("mag", mag)

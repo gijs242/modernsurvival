@@ -190,6 +190,18 @@ def convert(cfg):
                 near = [v.co.z for v in bpy.data.objects["M4 Carbine"].data.vertices if abs(v.co.y - rail_y) < 0.15]
                 top = max(near) if near else cmx.z
                 o.data.transform(Matrix.Translation((-c.x, rail_y - c.y, top - mn.z - 0.005)))
+                # open the holographic window: delete the faces facing along the bore inside the hood
+                emn, emx = bounds([o])
+                h, wdt = emx.z - emn.z, emx.x - emn.x
+                bm = bmesh.new()
+                bm.from_mesh(o.data)
+                dead = [f for f in bm.faces if abs(f.normal.y) > 0.6
+                        and abs(f.calc_center_median().x - (emn.x + emx.x) / 2) < wdt * 0.36
+                        and emn.z + h * 0.42 < f.calc_center_median().z < emn.z + h * 0.92]
+                bmesh.ops.delete(bm, geom=dead, context="FACES")
+                bm.to_mesh(o.data)
+                bm.free()
+                print("EOTech window faces removed:", len(dead))
     if cfg.get("pre") == "bolt":
         transform_all(Matrix(((0, 0, 1, 0), (1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 0, 1))))   # X->Y, Y->Z, Z->X
     if cfg.get("rot_z"):
@@ -261,6 +273,10 @@ def convert(cfg):
     mn, mx = bounds()
     bore_z -= origin.z
     # markers
+    eo = [o for o in meshes() if o.name == "EOTech"]
+    if eo:
+        emn, emx = bounds(eo)
+        empty("Reticle", (0, (emn.y + emx.y) / 2, 0))
     empty("Muzzle", (bore_x - origin.x, mx.y + 0.005, bore_z))
     empty("Eject", (0.03, (mn.y + L * (cfg["grip"] + 0.12)), bore_z + 0.01))
     gr = verts_in(-0.03, 0.03)
