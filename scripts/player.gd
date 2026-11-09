@@ -462,7 +462,7 @@ func _build_vm(w: String) -> Node3D:
 	var root := Node3D.new()
 	var gun := WeaponModel.build(w)
 	root.add_child(gun)
-	var sleeve := Soldier._camo("vm_sleeve", Soldier.STYLES.friendly.camo)
+	var sleeve := Mat.pbr("fabric", Color(0.38, 0.39, 0.35), 0.95, 0.0, 3.0)
 	var glove := Mat.pbr("fabric", Color(0.36, 0.31, 0.23), 0.9, 0.0, 4.0)
 	var cap := func(r: float, h: float) -> CapsuleMesh:
 		var c := CapsuleMesh.new()
