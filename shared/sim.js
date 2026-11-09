@@ -191,7 +191,7 @@ export class Game {
   }
 
   playerHits(p, m) {
-    if (p.downed || p.dead || !Array.isArray(m.hits)) return;
+    if (p.dead || !Array.isArray(m.hits) || (p.downed && m.w !== 'pistol')) return;
     const w = WEAPONS[m.w];
     if (!w || !p.weapons.includes(m.w) || w.rocket) return;
     const per = new Map();
