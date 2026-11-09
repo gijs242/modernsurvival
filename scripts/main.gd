@@ -47,11 +47,12 @@ func _ready() -> void:
 	Net.connected.connect(_on_connected)
 	Net.failed.connect(func(msg): _set_status(msg, true); _show_menu())
 	Net.disconnected.connect(func(): _end_session(); _set_status("Disconnected from server", true))
+	if Net.args.has("autotest"):
+		autotest_t = float(Net.args.get("autotest", 30)) if str(Net.args.autotest) != "true" else 30.0
 	if Net.args.has("join"):
 		name_edit.text = Net.player_name
 		_join(str(Net.args.join), Net.port)
-	elif Net.args.has("autotest"):
-		autotest_t = float(Net.args.get("autotest", 30)) if str(Net.args.autotest) != "true" else 30.0
+	elif Net.args.has("autotest") or Net.args.has("shots"):
 		_start_sp()
 
 
@@ -464,8 +465,68 @@ func _notification(what: int) -> void:
 
 
 func _process(dt: float) -> void:
-	if autotest_t > 0.0:
+	if Net.args.has("shots"):
+		_shots(dt)
+	elif autotest_t > 0.0:
 		_autotest(dt)
+
+
+# ======================================================================= screenshot tour (dev tool)
+var _shot_t := 0.0
+var _shot_i := 0
+const SHOT_POSES := [
+	# [time, pos, yaw, pitch, name, ads]
+	[3.0, Vector3(0, 0, 6), 0.0, 0.02, "spawn_armory", false],
+	[5.0, Vector3(-1.5, 0, -15.5), 0.08, 0.05, "armory", false],
+	[7.0, Vector3(4.6, 0, -23.0), 0.0, -0.1, "station", false],
+	[9.0, Vector3(-5, 0, 3), -2.3, 0.04, "yard", false],
+	[11.0, Vector3(20, 0, -3), 2.1, 0.0, "containers", false],
+	[13.0, Vector3(0, 0, -4), PI, 0.0, "ads", true],
+]
+
+func _shots(dt: float) -> void:
+	_shot_t += dt
+	if game == null:
+		return
+	var lp: Player = game.player_nodes.get(game.local_id)
+	var p: Dictionary = game.P.get(game.local_id, {})
+	if lp == null or p.is_empty():
+		return
+	p.hp = 100.0
+	p.downed = false
+	if _shot_i < SHOT_POSES.size():
+		var pose: Array = SHOT_POSES[_shot_i]
+		game.timer = 60.0
+		lp.global_position = pose[1]
+		p.pos = pose[1]
+		lp.yaw = pose[2]
+		lp.pitch = pose[3]
+		lp.ads = 1.0 if pose[5] else 0.0
+		if pose[5] and lp.cur != "ar":
+			p.weapons = ["pistol", "ar"]
+			lp._sync_weapons(p.weapons)
+			lp._equip("ar", true)
+		if _shot_t >= pose[0]:
+			_capture(pose[4])
+			_shot_i += 1
+			if _shot_i == SHOT_POSES.size():
+				game.timer = 0.5
+				autotest_t = 1e9
+	else:
+		_autotest(dt)
+		if game.enemies.size() >= 4 and _shot_t > 30.0 and _shot_i < 20 and fmod(_shot_t, 3.0) < dt:
+			_capture("combat_%d" % _shot_i)
+			_shot_i += 1
+		if _shot_t > float(Net.args.get("shots_time", 70)):
+			get_tree().quit(0)
+
+
+func _capture(name: String) -> void:
+	var dir := str(Net.args.shots)
+	DirAccess.make_dir_recursive_absolute(dir)
+	var img := get_viewport().get_texture().get_image()
+	img.save_png("%s/%s.png" % [dir, name])
+	print("[shots] saved %s" % name)
 
 
 # ======================================================================= headless self-test
@@ -481,7 +542,9 @@ func _autotest(dt: float) -> void:
 	if lp == null:
 		return
 	var p: Dictionary = game.P.get(game.local_id, {})
-	if not p.is_empty():
+	if p.is_empty():
+		p = game.me
+	elif true:
 		p.hp = 100.0                      # god mode so the test runs to the end
 		p.downed = false
 		if int(_at_elapsed) % 7 == 0:
@@ -517,7 +580,7 @@ func _autotest(dt: float) -> void:
 	if f % 1800 == 500: game.send({"t": "drone"})
 	if f % 2400 == 600: game.send({"t": "strike", "k": "carpet"})
 	if f % 300 == 0:
-		print("[autotest] t=%.0fs wave=%d state=%s enemies=%d kills=%d money=%d shots=%d fps=%d" % [_at_elapsed, game.wave, game.state, game.enemies.size(), p.get("kills", 0), p.get("money", 0), _at_fired, Engine.get_frames_per_second()])
+		print("[autotest:%s] t=%.0fs wave=%d state=%s enemies=%d kills=%d money=%d shots=%d fps=%d" % [Net.mode, _at_elapsed, game.snap.get("wave", 0), game.snap.get("state", "?"), game.enemies.size(), p.get("kills", p.get("k", 0)), p.get("money", p.get("m", 0)), _at_fired, Engine.get_frames_per_second()])
 	if _at_elapsed >= autotest_t:
-		print("[autotest] DONE wave=%d kills=%d" % [game.wave, p.get("kills", 0)])
+		print("[autotest] DONE wave=%d kills=%d (%s)" % [game.snap.get("wave", 0), p.get("kills", p.get("k", 0)), Net.mode])
 		get_tree().quit(0)

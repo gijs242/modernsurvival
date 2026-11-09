@@ -1,0 +1,211 @@
+# Modern Survival
+
+A wave-based survival shooter inspired by the *Survival* mode of classic modern military shooters, built in **Godot 4.7**.
+Hold a walled industrial yard against ever-larger waves of hostiles, earn cash for kills, combos and surviving waves,
+and spend it at the **Armory** — a physical shop building on the north side of the map with three stations
+(Weapons, Equipment, Air Support). New gear unlocks every few waves.
+
+- **Singleplayer**, **co-op (up to 4)** as a listen server, or a **dedicated headless server** on your own hardware.
+- Realistic rendering: physically based materials (CC0 scans from ambientCG), HDRI sky lighting (Poly Haven),
+  SDFGI global illumination, SSAO/SSIL, volumetric fog, soft cascaded shadows, AgX tonemapping and a colour grade.
+- Satisfying feedback: client-side hitmarkers (white = hit, gold = headshot, red = kill) with distinct sounds,
+  blood/impact effects, money pop-ups, kill-combo callouts, screen shake, damage-direction indicators.
+
+---
+
+## 1. Install and play (5 minutes)
+
+1. **Download Godot 4.7** (the standard build, *not* the .NET build) from <https://godotengine.org/download>.
+   It is a single executable — no installer needed. Any 4.7.x works (developed and tested on 4.7.2).
+2. **Get the project**
+   ```bash
+   git clone https://github.com/gijs242/modernsurvival.git
+   ```
+   (or on GitHub: *Code → Download ZIP* and unzip it).
+3. **Open it**: start Godot → *Project Manager* → **Import** → pick `modernsurvival/project.godot` → **Import & Edit**.
+   The first open imports all textures and models; this takes 1–3 minutes. Later opens are instant.
+4. Press **F5** (or the ▶ button top-right) to play.
+5. In the menu choose **Singleplayer**, or **Host Co-op** / **Join** for multiplayer. Pick a graphics preset that suits
+   your PC (*Ultra* adds TAA + screen-space reflections, *Low* uses FSR upscaling for weaker GPUs).
+
+**Controls**
+
+| Key | Action | Key | Action |
+|---|---|---|---|
+| WASD | move | Shift | sprint |
+| Space | jump | C / Ctrl | crouch |
+| Left mouse | fire | Right mouse | aim down sights |
+| R | reload | 1 / 2 / wheel | switch weapon |
+| G | throw frag | V | melee |
+| E | open armory station / hold to revive | F | ready up (start next wave early) |
+| 4 | place claymore | 5 | place sentry gun |
+| 6 | airstrike (aim, click to mark) | 7 | gunship |
+| 8 | carpet bombing | Tab | squad scoreboard |
+| Esc | pause / close shop | F11 | fullscreen |
+
+---
+
+## 2. Hosting on your own hardware
+
+Co-op uses **UDP port 7777** by default (change it in the menu or with `--port`).
+
+### Option A — Listen server (simplest)
+One player clicks **Host Co-op**. Others type the host's IP address in *Server address* and click **Join**.
+- Same house/LAN: use the host's local IP (e.g. `192.168.1.20`; find it with `ipconfig` on Windows or `ip a` on Linux).
+- Over the internet: forward **UDP 7777** on the host's router to the host PC, and give friends your public IP
+  (search "what is my ip"). Allow Godot / the game through the Windows firewall when it asks.
+
+### Option B — Dedicated server (always-on box, home server, VPS, Raspberry-Pi-class machines are too slow)
+The same project runs headless as a server with no window or GPU required:
+
+```bash
+godot --headless --path /path/to/modernsurvival -- --server --port 7777
+```
+
+It prints its LAN address. Players use **Join** with that address. The server resets itself when everyone leaves.
+
+To keep it running on Linux with systemd, create `/etc/systemd/system/modernsurvival.service`:
+
+```ini
+[Unit]
+Description=Modern Survival dedicated server
+After=network-online.target
+
+[Service]
+ExecStart=/usr/local/bin/godot --headless --path /opt/modernsurvival -- --server --port 7777
+Restart=always
+User=games
+
+[Install]
+WantedBy=multi-user.target
+```
+
+```bash
+sudo systemctl enable --now modernsurvival
+```
+
+```bash
+sudo ufw allow 7777/udp
+```
+
+### Option C — Exported builds (share the game without Godot)
+1. In the editor: **Editor → Manage Export Templates → Download and Install** (one-time).
+2. **Project → Export…** — presets for *Windows*, *Linux* and *Linux Dedicated Server* are already set up.
+   Click **Export Project** for each one you need; output goes to `build/`.
+3. Run the server build with `./ModernSurvivalServer.x86_64 --headless -- --server --port 7777`.
+
+Command-line options (after `--`): `--server`, `--port N`, `--join ADDRESS`, `--name CALLSIGN`.
+
+---
+
+## 3. Gameplay
+
+- **Waves** grow in size and difficulty; every 5th wave brings Juggernauts (heavily armoured LMG gunners).
+- **Enemies**: Militia (light), Riflemen (accurate), Breachers (shotguns), Rushers (sprinting knife attackers), Juggernauts.
+- **Money**: $50–$500 per kill by type, +$25 headshot, +$50 melee, kill-combo bonus (up to +$300),
+  wave-survived bonus ($250 + $50 × wave), +$150 flawless wave (no damage), +$100 for reviving a teammate.
+- **Downed** players get a pistol and 35 s to be revived (hold E next to them); a Self-Revive Kit gets you up after 5 s.
+  The game ends when nobody is left standing. Dead players redeploy when the wave ends.
+
+**Unlock schedule** (unlocks after you *complete* the listed wave):
+
+| After wave | Weapons | Equipment | Air support |
+|---|---|---|---|
+| 0 | Wasp SMG $1000, Breacher 12G $1200 | Ammo $350, Frags $400 | — |
+| 2 | Ranger AR $2200 | Body Armor $800 | — |
+| 4 | — | Claymores $700, Self-Revive $1500 | Precision Airstrike $2000 |
+| 6 | Longbow DMR $3000 | Heavy Armor $2000, Sentry Gun $2500 | — |
+| 8 | Bulwark LMG $4500 | — | Gunship $4000 |
+| 10 | Ravager RL $5500 | — | — |
+| 12 | — | — | Carpet Bombing $6000 |
+
+Tweak anything in `scripts/defs.gd` (weapon stats, prices, unlocks, enemy stats).
+
+---
+
+## 4. Making it look even closer to a AAA shooter (optional)
+
+Everything already works with the bundled CC0 assets: real PBR textures for the ground, walls, buildings,
+containers, sandbags and vehicles, an HDRI sky, and Poly Haven props (concrete road barriers, military crates,
+barrels, covered cars, street lamps, jerry cans, an ammo box and a real 3D-scanned service pistol used as your sidearm).
+Soldiers and most rifles are procedural (camo-shaded, animated in code). The biggest visual upgrade is swapping
+those for rigged characters and detailed gun models. The code already supports this — just drop files in:
+
+### Realistic animated soldiers (free, ~15 minutes) — Mixamo
+1. Go to <https://www.mixamo.com> and sign in with a free Adobe account.
+2. **Characters** tab → pick a military-looking one (e.g. search "soldier" or "swat").
+   **Download** → Format *FBX Binary*, Pose *T-pose* → save as `assets/characters/soldier.fbx`.
+   (Optional: different looks per enemy type: `grunt.fbx`, `rifleman.fbx`, `shotgunner.fbx`, `rusher.fbx`, `heavy.fbx`, `friendly.fbx`.)
+3. **Animations** tab (with that character selected) — for each of these, tick **In Place** where offered and download
+   as *FBX Binary*, **Without Skin**, into `assets/characters/anims/` with exactly these names:
+
+   | File | Search Mixamo for |
+   |---|---|
+   | `idle.fbx` | "Rifle Aiming Idle" |
+   | `walk.fbx` | "Rifle Walk" |
+   | `run.fbx` | "Rifle Run" |
+   | `fire.fbx` | "Firing Rifle" |
+   | `death.fbx` | "Death From Front Headshot" (or any death) |
+   | `melee.fbx` | "Stabbing" (used by Rushers) |
+
+4. Re-open the project (Godot imports the FBX files automatically) and play. The game scales the character to 1.8 m,
+   attaches the weapon to the right hand bone and blends the clips automatically. If the gun sits wrong in the hand,
+   adjust the rotation in `scripts/soldier.gd` → `_try_custom()` (`gun.rotation = ...`).
+
+### Detailed weapon models
+Put a model at `assets/weapons/<id>.glb` (ids: `smg`, `shotgun`, `ar`, `dmr`, `lmg`, `launcher`, and `pistol` to replace the scanned pistol).
+- The model must point down **-Z** with the pistol grip at the origin, real-world scale (metres).
+- Optionally add empty child nodes named `Muzzle`, `Mag` and `Eject` in Blender — the muzzle flash, reload animation and
+  shell ejection then use them.
+- Good sources: Sketchfab (filter *Downloadable* + licence *CC0* or *CC-BY*, credit the authors), or paid packs on the Unity Asset Store / Fab
+  that allow use in other engines.
+
+### Real weapon sounds
+Drop `.wav`/`.ogg` files into `assets/sounds/` named after the sound they replace — e.g. `ar.wav`, `smg.wav`,
+`shotgun.wav`, `pistol.wav`, `dmr.wav`, `lmg.wav`, `explosion.wav`, `hit.wav`, `kill.wav`, `step.wav`, `jet.wav`.
+The full list of names is in `scripts/sfx.gd` (`_generate()`). <https://freesound.org> has many CC0 gunshot recordings.
+
+### More textures / a different sky
+`python3 tools/fetch_assets.py` re-downloads the CC0 assets. Edit the lists at the top of that script to swap
+materials (any ambientCG id) or the HDRI (any Poly Haven HDRI id), then reopen the project.
+If you change the HDRI, also update `SUN_DIR` in `scripts/map.gd` so shadows match the sun in the sky.
+
+---
+
+## 5. Project layout
+
+```
+project.godot          Godot project (Forward+ renderer, Jolt physics)
+scenes/main.tscn       entry scene
+scripts/
+  main.gd              menus, session start (SP / host / join / dedicated), pause, game over
+  net.gd               ENet networking + command-line args (autoload "Net")
+  game.gd              authoritative game: waves, economy, shop, support, events & snapshots
+  enemy.gd             enemy AI (navmesh, line of sight, burst fire, rushers) and client puppets
+  player.gd            first-person controller, weapons, viewmodel, revive, designator
+  map.gd               the yard: walls, armory, buildings, containers, cover, lighting, sky, navmesh
+  hud.gd               HUD, hitmarkers, minimap, shop panel, scoreboard
+  effects.gd           particles, tracers, decals, explosions, casings
+  sfx.gd               procedural sound synthesis + overrides (autoload "Sfx")
+  soldier.gd           soldier models + animation (procedural or Mixamo)
+  weapon_model.gd      weapon models (procedural or custom .glb)
+  props.gd             grenades, rockets, claymores, sentries, aircraft
+  defs.gd              all tunable game data (autoload "Defs")
+assets/                CC0 textures (ambientCG), HDRI + props (Poly Haven)
+tools/fetch_assets.py  re-download / change the CC0 assets
+```
+
+## 6. Troubleshooting
+
+- **Black or very slow screen**: choose *Low* or *Medium* graphics in the menu. *High/Ultra* use SDFGI and volumetric
+  fog, which need a reasonably modern GPU (GTX 1060 / RX 580 or better recommended for High).
+- **Friends can't join**: check the port is forwarded as **UDP** (not TCP), that the host firewall allows Godot,
+  and that everyone uses the same game version.
+- **"Parse error" on open**: you are on an older Godot. Use 4.7 or newer.
+
+## Credits & licences
+
+- Textures: [ambientCG](https://ambientcg.com) — CC0.
+- HDRI sky and props (barriers, crates, barrels, lamp, car, jerrycan, ammo box, service pistol, etc.): [Poly Haven](https://polyhaven.com) — CC0.
+- Engine: [Godot Engine](https://godotengine.org) — MIT.
+- Everything else (code, procedural models, sounds) is part of this project.

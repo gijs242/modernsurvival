@@ -860,6 +860,8 @@ func _sync_objects(s: Dictionary) -> void:
 		n.set_meta("seen", false)
 	for a in s.proj:
 		var n := _obj("p%d" % a[0], func(): return Props.frag() if a[1] == "frag" else Props.rocket())
+		if not n.has_meta("prev"):
+			n.global_position = a[2]
 		var prev: Vector3 = n.get_meta("prev", a[2])
 		n.set_meta("target", a[2])
 		n.set_meta("prev", a[2])
@@ -878,6 +880,8 @@ func _sync_objects(s: Dictionary) -> void:
 		(n.get_meta("head") as Node3D).rotation.y = lerp_angle((n.get_meta("head") as Node3D).rotation.y, a[2], 0.5)
 	for a in s.drones:
 		var n := _obj("d%d" % a[0], func(): return Props.gunship())
+		if not n.has_meta("target"):
+			n.global_position = a[1]
 		n.set_meta("target", a[1])
 		n.set_meta("ang", a[2])
 	for k in obj_nodes.keys():
@@ -1001,6 +1005,8 @@ func _on_shot(e: Dictionary, lp: Player) -> void:
 			fx.tracer(o, end, Color(5, 2.2, 1.2, 0.9), 0.06, 300.0)
 			Sfx.play_at("gunship", o, 8.0, 1.0, 400.0)
 			fx.impact(end, Vector3.UP, "ground")
+		"knife":
+			Sfx.play_at("stab", end, 0.0)
 		_:
 			if e.has("eid"):
 				var en: Enemy = enemies.get(e.eid)

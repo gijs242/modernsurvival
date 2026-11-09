@@ -36,6 +36,8 @@ func _ready() -> void:
 
 
 func is_dedicated() -> bool:
+	if OS.has_feature("dedicated_server"):
+		return true
 	return args.has("server") or DisplayServer.get_name() == "headless" and not args.has("autotest") and not args.has("join")
 
 
@@ -50,6 +52,7 @@ func host(p: int) -> int:
 	var err := peer.create_server(p, Defs.MAX_PLAYERS)
 	if err != OK:
 		return err
+	peer.host.compress(ENetConnection.COMPRESS_ZSTD)
 	multiplayer.multiplayer_peer = peer
 	mode = "host"
 	port = p
@@ -68,6 +71,7 @@ func join(address: String, p: int) -> int:
 	var err := peer.create_client(address, p)
 	if err != OK:
 		return err
+	peer.host.compress(ENetConnection.COMPRESS_ZSTD)
 	multiplayer.multiplayer_peer = peer
 	mode = "client"
 	return OK
