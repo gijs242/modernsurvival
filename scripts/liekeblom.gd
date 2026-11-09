@@ -24,6 +24,7 @@ func build(map: GameMap) -> void:
 		push_error("Could not load " + DATA)
 		return
 	theta = float(d.mall.theta)
+	m.set_meta("theta", theta)
 	var b: Array = d.bounds
 	m.bounds = Rect2(b[0], b[1], b[2] - b[0], b[3] - b[1])
 	body = StaticBody3D.new()
@@ -395,10 +396,11 @@ func _shop(s: Dictionary, armory: bool) -> void:
 	var side := Vector3(-inward.z, 0, inward.x)
 	if armory:
 		# vacant unit converted into the Armory: three counters facing the door
-		var back := door + inward * 6.5
+		var depth: float = (c - door).dot(inward)
+		var back: Vector3 = door + inward * clampf(depth * 1.35, 3.5, 7.0)
 		var i := 0
 		for cat in ["weapons", "equipment", "air"]:
-			var pos := back + side * (float(i - 1) * 3.4)
+			var pos := back + side * (float(i - 1) * 3.6)
 			m.stations.append({"cat": cat, "pos": pos, "facing": -inward, "label": Defs.CAT_NAMES[cat]})
 			i += 1
 		return
@@ -508,11 +510,10 @@ func _hall() -> void:
 				for q in [p, p + u_axis * step, p + v_axis * step, p + (u_axis + v_axis) * step]:
 					put.call(q, c)
 				# beige diamond ceiling panels on a checker, glass in between (daylight comes through)
-				if (i + j) % 2 == 0:
-					var panel := QuadMesh.new()
-					panel.size = Vector2(step * 0.7, step * 0.7)
-					var pb := Basis(Vector3.RIGHT, PI / 2) * Basis(Vector3.FORWARD, PI / 4)
-					m._merge_add(beige, panel, Transform3D(rot * Basis(Vector3.UP, 0) * Basis(Vector3.RIGHT, -PI / 2) * Basis(Vector3.FORWARD, PI / 4), c + Vector3(0, 0.05, 0)))
+				if (i + j) % 3 != 0:
+					var panel := BoxMesh.new()
+					panel.size = Vector3(step * 0.68, 0.03, step * 0.68)
+					m._merge_add(beige, panel, Transform3D(rot * Basis(Vector3.UP, PI / 4), c + Vector3(0, 0.08, 0)))
 	mm.instance_count = xforms.size()
 	for k in xforms.size():
 		mm.set_instance_transform(k, xforms[k])
@@ -540,12 +541,22 @@ func _hall() -> void:
 	for k in 4:
 		var a0: Vector3 = corners[k]
 		var b0: Vector3 = corners[(k + 1) % 4]
+		var runs := [[a0, b0]]
 		if k == 2:
 			var mid := (a0 + b0) * 0.5
-			_wall(black, a0, mid + (a0 - mid).normalized() * 0.8, 0.0, 0.95, 0.05)
-			_wall(black, mid + (b0 - mid).normalized() * 0.8, b0, 0.0, 0.95, 0.05)
-		else:
-			_wall(black, a0, b0, 0.0, 0.95, 0.05)
+			runs = [[a0, mid + (a0 - mid).normalized() * 0.8], [mid + (b0 - mid).normalized() * 0.8, b0]]
+		for rn in runs:
+			var r0: Vector3 = rn[0]
+			var r1: Vector3 = rn[1]
+			_wall(black, r0, r1, 0.92, 0.97, 0.05, false)                 # top rail
+			_wall(black, r0, r1, 0.12, 0.16, 0.04, false)                 # bottom rail
+			var dist := r0.distance_to(r1)
+			for q in int(dist / 0.12) + 1:                                 # balusters
+				var pp := r0.lerp(r1, q * 0.12 / max(dist, 0.01))
+				var bar := BoxMesh.new()
+				bar.size = Vector3(0.02, 0.8, 0.02)
+				m._merge_add(black, bar, Transform3D(Basis(), pp + Vector3(0, 0.55, 0)))
+			_box_col(Vector3(0.08, 1.0, dist), Transform3D(Basis.looking_at((r1 - r0).normalized(), Vector3.UP), (r0 + r1) * 0.5 + Vector3(0, 0.5, 0)))
 	for i in 3:
 		for j in 2:
 			var tp := cafe + u_axis * (i * 2.6 - 2.6) + v_axis * (j * 2.4 - 1.2)

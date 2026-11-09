@@ -498,6 +498,23 @@ const SHOT_POSES := [
 	[16.5, Vector3(20, 0, -3), 2.1, 0.0, "containers", false, "ar"],
 ]
 
+func _liekeblom_poses() -> Array:
+	var th: float = game.map.get_meta("theta", 0.0)
+	var sp: Vector3 = game.map.player_spawns[0]
+	var st: Dictionary = game.map.stations[1]
+	var f: Vector3 = st.facing
+	var ext: Vector3 = game.map.spawns[0]
+	var to_mall := ext - sp
+	return [
+		[3.0, sp, -th, 0.05, "hall", false, "pistol"],
+		[4.5, sp, -th + 0.9, 0.12, "hall_roof", false, "pistol"],
+		[6.0, sp, -th + PI / 2, 0.0, "corridor", false, "ar"],
+		[7.5, sp, -th + PI, 0.0, "hall_back", true, "ar"],
+		[9.0, st.pos + f * 3.4, atan2(f.x, f.z), -0.05, "armory", false, "pistol"],
+		[10.5, ext, atan2(to_mall.x, to_mall.z), 0.06, "street", false, "smg"],
+	]
+
+
 func _shots(dt: float) -> void:
 	_shot_t += dt
 	if game == null:
@@ -508,8 +525,9 @@ func _shots(dt: float) -> void:
 		return
 	p.hp = 100.0
 	p.downed = false
-	if _shot_i < SHOT_POSES.size():
-		var pose: Array = SHOT_POSES[_shot_i]
+	var poses: Array = SHOT_POSES if game.map.map_id == "yard" else _liekeblom_poses()
+	if _shot_i < poses.size():
+		var pose: Array = poses[_shot_i]
 		game.timer = 60.0
 		lp.global_position = pose[1]
 		p.pos = pose[1]
@@ -524,7 +542,7 @@ func _shots(dt: float) -> void:
 		if _shot_t >= pose[0]:
 			_capture(pose[4])
 			_shot_i += 1
-			if _shot_i == SHOT_POSES.size():
+			if _shot_i == poses.size():
 				game.timer = 0.5
 				autotest_t = 1e9
 	else:
