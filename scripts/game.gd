@@ -46,14 +46,14 @@ var snap_t := 0.0
 var obj_nodes := {}          # "kind:id" -> Node3D
 
 
-func setup(p_quality: int) -> void:
+func setup(p_quality: int, p_map := "yard") -> void:
 	quality = p_quality
 	is_server = multiplayer.is_server()
 	local_id = multiplayer.get_unique_id()
 	map = GameMap.new()
 	map.name = "Map"
 	add_child(map)
-	map.build(is_server, quality)
+	map.build(is_server, quality, p_map)
 	fx = Effects.new()
 	fx.name = "Effects"
 	add_child(fx)
@@ -141,7 +141,7 @@ func reset() -> void:
 
 
 func _init_player(p: Dictionary, idx: int) -> void:
-	var s: Vector3 = GameMap.PLAYER_SPAWNS[idx % GameMap.PLAYER_SPAWNS.size()]
+	var s: Vector3 = map.player_spawns[idx % map.player_spawns.size()]
 	p.merge({"pos": s, "yaw": 0.0, "pitch": 0.0, "cr": false, "hp": 100.0, "armor": 0.0, "money": Defs.START_MONEY,
 		"weapons": ["pistol"], "cur": "pistol", "frags": 2, "mines": 0, "turrets": 0, "self_revive": 0, "strikes": 0,
 		"drones": 0, "carpets": 0, "downed": false, "dead": false, "down_t": 0.0, "rev_p": 0.0, "rev": 0, "last_dmg": -99.0,
@@ -513,7 +513,7 @@ func _end_wave() -> void:
 
 
 func _respawn(p: Dictionary, idx: int) -> void:
-	var s: Vector3 = GameMap.PLAYER_SPAWNS[idx % GameMap.PLAYER_SPAWNS.size()]
+	var s: Vector3 = map.player_spawns[idx % map.player_spawns.size()]
 	p.dead = false
 	p.downed = false
 	p.hp = 100.0
@@ -523,10 +523,10 @@ func _respawn(p: Dictionary, idx: int) -> void:
 
 
 func _spawn_enemy(type: String) -> void:
-	var best: Vector3 = GameMap.SPAWNS[0]
+	var best: Vector3 = map.spawns[0]
 	var bs := -1.0
 	for k in 3:
-		var s: Vector3 = GameMap.SPAWNS[randi() % GameMap.SPAWNS.size()]
+		var s: Vector3 = map.spawns[randi() % map.spawns.size()]
 		var d := 1e9
 		for p in P.values():
 			d = min(d, s.distance_to(p.pos))

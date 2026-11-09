@@ -5,3 +5,5 @@ export_presets.cfg.bak
 /build/
 /export/
 .DS_Store
+# raw downloads for tools/build_liekeblom.py and tools/fetch_weapons.py
+/build/

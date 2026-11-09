@@ -28,6 +28,12 @@ TEXTURES = {
     "planks": "Planks037A",
     "plaster": "PaintedPlaster017",
     "burlap": "Fabric045",
+    "roof_dark": "RoofingTiles013A",
+    "roof_red": "RoofingTiles014A",
+    "klinkers": "PavingStones152",
+    "sidewalk": "PavingStones128",
+    "mall_floor": "Tiles107",
+    "gravel": "Gravel023",
 }
 MAPS = {"_Color.jpg": "albedo.jpg", "_NormalGL.jpg": "normal.jpg", "_Roughness.jpg": "roughness.jpg",
         "_AmbientOcclusion.jpg": "ao.jpg", "_Metalness.jpg": "metallic.jpg"}

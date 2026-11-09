@@ -219,6 +219,12 @@ func _build_menu() -> void:
 	port_edit.text = str(Settings.get_val("port", Defs.DEFAULT_PORT))
 	port_edit.text_changed.connect(func(t): Settings.set_val("port", int(t)))
 	_row(v, "Port", port_edit)
+	var map_opt := OptionButton.new()
+	map_opt.add_item("De Liekeblom (Leek)")
+	map_opt.add_item("Industrial Yard")
+	map_opt.selected = 0 if Settings.get_val("map", "liekeblom") == "liekeblom" else 1
+	map_opt.item_selected.connect(func(i): Settings.set_val("map", "liekeblom" if i == 0 else "yard"))
+	_row(v, "Map (host / solo)", map_opt)
 	quality_opt = OptionButton.new()
 	for q in ["Low", "Medium", "High", "Ultra"]:
 		quality_opt.add_item(q)
@@ -323,12 +329,14 @@ func _player_name() -> String:
 
 func _start_sp() -> void:
 	Net.start_sp()
+	Net.map_id = str(Net.args.get("map", Settings.get_val("map", "liekeblom")))
 	_start_game()
 	game.send({"t": "join", "name": _player_name()})
 
 
 func _host() -> void:
 	var p := int(port_edit.text) if port_edit else Defs.DEFAULT_PORT
+	Net.map_id = str(Settings.get_val("map", "liekeblom"))
 	var err := Net.host(p)
 	if err != OK:
 		_set_status("Could not host on port %d (error %d)" % [p, err], true)
@@ -363,13 +371,13 @@ func _start_dedicated() -> void:
 	game = Game.new()
 	game.name = "Game"
 	add_child(game)
-	game.setup(0)
+	game.setup(0, Net.map_id)
 	multiplayer.peer_connected.connect(func(id): print("[+] peer %d connected (%d online)" % [id, multiplayer.get_peers().size()]))
 	multiplayer.peer_disconnected.connect(func(id):
 		print("[-] peer %d left" % id)
 		if multiplayer.get_peers().is_empty():
 			game.reset())
-	print("Modern Survival dedicated server listening on UDP port %d (max %d players)" % [Net.port, Defs.MAX_PLAYERS])
+	print("Modern Survival dedicated server listening on UDP port %d (max %d players), map: %s" % [Net.port, Defs.MAX_PLAYERS, Net.map_id])
 	for a in IP.get_local_addresses():
 		if a.count(".") == 3 and not a.begins_with("127."):
 			print("  LAN address: %s:%d" % [a, Net.port])
@@ -388,7 +396,7 @@ func _start_game() -> void:
 	game.hud = hud
 	ui.add_child(hud)
 	ui.move_child(hud, 0)
-	game.setup(int(Settings.get_val("quality", 2)))
+	game.setup(int(Settings.get_val("quality", 2)), Net.map_id)
 	game.game_over.connect(_on_game_over)
 	Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
 
@@ -626,8 +634,9 @@ func _selftest(dt: float) -> void:
 	match _st_step:
 		0:
 			if _st_t > 1.0:
-				lp.global_position = Vector3(-4.6, 0.05, -23.4)
-				lp.yaw = 0.0
+				var st0: Dictionary = game.map.stations[0]
+				lp.global_position = st0.pos + (st0.facing as Vector3) * 1.6 + Vector3(0, 0.05, 0)
+				lp.yaw = atan2((st0.facing as Vector3).x, (st0.facing as Vector3).z)
 				_st_step = 1
 		1:
 			if _st_t > 1.5:
@@ -650,7 +659,7 @@ func _selftest(dt: float) -> void:
 			if _st_t > 2.8:
 				_st_check("E closes the shop again", not hud.shop_open)
 				Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
-				lp.global_position = Vector3(0, 0.05, 4)
+				lp.global_position = game.map.player_spawns[0]
 				_st_pitch = lp.pitch
 				lp.fire_cd = 0.0
 				lp._try_fire()
@@ -662,7 +671,7 @@ func _selftest(dt: float) -> void:
 				# spawn a hostile in front of the player and kill it
 				game._spawn_enemy("rifleman")
 				_st_enemy = game.enemies.values()[game.enemies.size() - 1]
-				_st_enemy.global_position = Vector3(0, 0.05, -2)
+				_st_enemy.global_position = lp.global_position + Vector3(-sin(lp.yaw), 0, -cos(lp.yaw)) * 4.0
 				_st_step = 7
 		7:
 			if _st_t > 3.2:

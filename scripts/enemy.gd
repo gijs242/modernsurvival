@@ -174,7 +174,7 @@ func _physics_process(dt: float) -> void:
 	var dir_t := to_t.normalized() if to_t.length() > 0.01 else Vector3.FORWARD
 	var mv := Vector3.ZERO
 	var speed := spd
-	var in_yard: bool = abs(pos.x) < GameMap.HALF - 1.0 and abs(pos.z) < GameMap.HALF - 1.0
+	var in_yard: bool = game.map.map_id != "yard" or (abs(pos.x) < GameMap.HALF - 1.0 and abs(pos.z) < GameMap.HALF - 1.0)
 	repath_t -= dt
 	if repath_t <= 0.0:
 		repath_t = 0.4

@@ -8,6 +8,7 @@ signal disconnected
 
 var mode := ""
 var player_name := "Soldier"
+var map_id := "liekeblom"        # "liekeblom" or "yard"; the server tells joining clients which one
 var port := Defs.DEFAULT_PORT
 var args := {}
 
@@ -30,9 +31,20 @@ func _ready() -> void:
 		port = int(args.port)
 	if args.has("name"):
 		player_name = str(args.name)
-	multiplayer.connected_to_server.connect(func(): connected.emit())
+	if args.has("map"):
+		map_id = str(args.map)
+	# clients learn the map from the server before building the level
+	multiplayer.peer_connected.connect(func(id):
+		if multiplayer.is_server() and multiplayer.multiplayer_peer is ENetMultiplayerPeer:
+			_server_info.rpc_id(id, map_id))
 	multiplayer.connection_failed.connect(func(): failed.emit("Could not connect to server"); _reset())
 	multiplayer.server_disconnected.connect(func(): disconnected.emit(); _reset())
+
+
+@rpc("authority", "call_remote", "reliable")
+func _server_info(m: String) -> void:
+	map_id = m
+	connected.emit()
 
 
 func is_dedicated() -> bool:

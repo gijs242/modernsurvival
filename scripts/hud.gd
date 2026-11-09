@@ -763,21 +763,22 @@ func _draw_minimap() -> void:
 	var yaw := lp.yaw if lp.is_local else 0.0
 	var me := lp.global_position
 	minimap.draw_rect(Rect2(Vector2.ZERO, sz), Color(0.05, 0.06, 0.06, 0.55))
-	for b in game.map.boxes:
-		if b.kind in ["lamp", "barrel"]:
-			continue
-		var corners := [Vector3(b.min.x, 0, b.min.z), Vector3(b.max.x, 0, b.min.z), Vector3(b.max.x, 0, b.max.z), Vector3(b.min.x, 0, b.max.z)]
+	var view := Rect2(Vector2(-60, -60), sz + Vector2(120, 120))
+	for item in game.map.minimap_polys:
 		var pts := PackedVector2Array()
 		var inside := false
-		for k in corners:
-			var p := _world_to_map(k - me, yaw, sc, c)
+		for k in item[0]:
+			var p := _world_to_map(Vector3(k.x, 0, k.y) - me, yaw, sc, c)
 			pts.append(p)
-			if Rect2(Vector2(-60, -60), sz + Vector2(120, 120)).has_point(p):
-				inside = true
-		if inside:
-			var col := Color(0.55, 0.55, 0.52, 0.7) if b.kind in ["wall", "building", "bunker", "roof"] else Color(0.4, 0.42, 0.4, 0.6)
-			minimap.draw_colored_polygon(pts, col)
-	for st in GameMap.STATIONS:
+			inside = inside or view.has_point(p)
+		if inside and pts.size() >= 3:
+			minimap.draw_colored_polygon(pts, item[1])
+	for ln in game.map.minimap_lines:
+		var a := _world_to_map(Vector3(ln[0].x, 0, ln[0].y) - me, yaw, sc, c)
+		var b := _world_to_map(Vector3(ln[1].x, 0, ln[1].y) - me, yaw, sc, c)
+		if view.has_point(a) or view.has_point(b):
+			minimap.draw_line(a, b, ln[2], 1.5)
+	for st in game.map.stations:
 		var p := _world_to_map(st.pos - me, yaw, sc, c)
 		minimap.draw_circle(p, 4.0, Defs.CAT_COLORS[st.cat])
 	for e in game.enemies.values():
@@ -801,7 +802,10 @@ func _draw_markers() -> void:
 		return
 	var cam := lp.cam
 	var f := font_bold
-	var armory := Vector3(0, 4.0, -19.0)
+	var armory := Vector3.ZERO
+	for st in game.map.stations:
+		armory += st.pos
+	armory = armory / max(1, game.map.stations.size()) + Vector3(0, 3.2, 0)
 	if lp.global_position.distance_to(armory) > 10.0 and not cam.is_position_behind(armory):
 		var p := cam.unproject_position(armory)
 		var d := lp.global_position.distance_to(armory)

@@ -22,6 +22,13 @@ const STATIONS := [
 ]
 
 var boxes: Array = []          # {kind, min:Vector3, max:Vector3, ...}
+var map_id := "yard"
+var spawns: Array = []         # enemy spawn points (Vector3)
+var player_spawns: Array = []
+var stations: Array = []       # {cat, pos, facing, label}
+var bounds := Rect2(-HALF, -HALF, HALF * 2, HALF * 2)   # playable area (x, z)
+var minimap_polys: Array = []  # [PackedVector2Array, Color]
+var minimap_lines: Array = []  # [Vector2, Vector2, Color]
 var nav_region: NavigationRegion3D
 var static_root: Node3D
 var _merge := {}               # Material -> SurfaceTool
@@ -108,9 +115,31 @@ func _layout() -> void:
 		_box("lamp", l[0], l[1], 0.3, 0.3, 6.2)
 
 
-func build(is_server: bool, quality: int) -> void:
-	_layout()
+func build(is_server: bool, quality: int, id := "yard") -> void:
+	map_id = id
 	_build_environment(quality)
+	if id == "liekeblom":
+		static_root = Node3D.new()
+		static_root.name = "Static"
+		if is_server:
+			nav_region = NavigationRegion3D.new()
+			nav_region.name = "Nav"
+			add_child(nav_region)
+			nav_region.add_child(static_root)
+		else:
+			add_child(static_root)
+		LiekeblomBuilder.new().build(self)
+		_flush_merge()
+		for st in stations:
+			_armory_station(st)
+		if is_server:
+			_bake_nav()
+		return
+	_layout()
+	spawns = SPAWNS.duplicate()
+	player_spawns = PLAYER_SPAWNS.duplicate()
+	for st in STATIONS:
+		stations.append({"cat": st.cat, "pos": st.pos, "facing": Vector3(0, 0, 1), "label": st.label})
 	static_root = Node3D.new()
 	static_root.name = "Static"
 	if is_server:
@@ -125,6 +154,12 @@ func build(is_server: bool, quality: int) -> void:
 		_build_box(b)
 	_flush_merge()
 	_build_armory()
+	for b in boxes:
+		if b.kind in ["lamp", "barrel"]:
+			continue
+		var big: bool = b.kind in ["wall", "building", "bunker", "roof"]
+		minimap_polys.append([PackedVector2Array([Vector2(b.min.x, b.min.z), Vector2(b.max.x, b.min.z), Vector2(b.max.x, b.max.z), Vector2(b.min.x, b.max.z)]),
+			Color(0.55, 0.55, 0.52, 0.7) if big else Color(0.4, 0.42, 0.4, 0.6)])
 	_build_backdrop()
 	_scatter_decor()
 	if is_server:
@@ -496,60 +531,8 @@ func _truck(b: Dictionary) -> void:
 
 
 func _build_armory() -> void:
-	for st in STATIONS:
-		var p: Vector3 = st.pos
-		var col: Color = Defs.CAT_COLORS[st.cat]
-		# Lit sign on the back wall
-		var sign := Label3D.new()
-		sign.text = st.label
-		sign.font_size = 96
-		sign.outline_size = 0
-		sign.modulate = col * 2.5
-		sign.pixel_size = 0.0036
-		sign.position = p + Vector3(0, 2.55, -0.62)
-		sign.shaded = false
-		sign.double_sided = false
-		static_root.add_child(sign)
-		var sub := Label3D.new()
-		sub.text = "[ E ]"
-		sub.font_size = 48
-		sub.modulate = Color(0.9, 0.9, 0.9)
-		sub.pixel_size = 0.004
-		sub.position = p + Vector3(0, 2.25, -0.62)
-		static_root.add_child(sub)
-		_merge_box(Mat.solid(Color(0.06, 0.06, 0.07), 0.5), Vector3(2.7, 0.8, 0.05), p + Vector3(0, 2.42, -0.66))
-		_merge_box(Mat.emissive(col, 5.0), Vector3(2.6, 0.04, 0.04), p + Vector3(0, 1.0, 0.52))
-		var light := OmniLight3D.new()
-		light.light_color = col
-		light.light_energy = 1.6
-		light.omni_range = 6.0
-		light.position = p + Vector3(0, 2.3, 0.9)
-		static_root.add_child(light)
-		# Floor ring to stand on
-		var ring := MeshInstance3D.new()
-		var tm := TorusMesh.new()
-		tm.inner_radius = 0.75
-		tm.outer_radius = 0.85
-		ring.mesh = tm
-		ring.scale = Vector3(1, 0.05, 1)
-		ring.material_override = Mat.emissive(col, 2.0)
-		ring.position = p + Vector3(0, 0.07, 1.6)
-		ring.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-		static_root.add_child(ring)
-		# Display props on the counters
-		match st.cat:
-			"weapons":
-				var pistol := _prop("service_pistol", p + Vector3(-0.6, 1.06, 0.1), 0.4, Vector3.ONE * 1.3)
-				if pistol:
-					pistol.rotation.x = PI / 2
-				_prop("ammo_box", p + Vector3(0.7, 1.05, 0.0), 0.3, Vector3.ONE * 1.6)
-				_merge_box(Mat.solid(Color(0.15, 0.15, 0.16), 0.5, 0.8), Vector3(2.4, 1.3, 0.1), p + Vector3(0, 1.8, -0.62))
-			"equipment":
-				_prop("old_military_crate", p + Vector3(0.2, 1.05, -0.05), 0.1)
-				_prop("metal_jerrycan_green", p + Vector3(-0.9, 1.05, 0.0), 0.5)
-			"air":
-				_merge_box(Mat.emissive(Color(0.1, 0.35, 0.6), 1.5), Vector3(0.9, 0.6, 0.05), p + Vector3(0, 1.55, -0.55))
-				_merge_box(Mat.solid(Color(0.1, 0.1, 0.1), 0.4, 0.6), Vector3(1.0, 0.7, 0.04), p + Vector3(0, 1.55, -0.58))
+	for st in stations:
+		_armory_station(st)
 	# Big ARMORY sign above the bunker
 	var big := Label3D.new()
 	big.text = "ARMORY"
@@ -569,6 +552,95 @@ func _build_armory() -> void:
 	fill.position = Vector3(0, 3.0, AZ - 1.0)
 	fill.shadow_enabled = true
 	static_root.add_child(fill)
+
+
+## One shop counter of the Armory. `facing` points from the counter towards where the player stands.
+func _armory_station(st: Dictionary) -> void:
+	var col: Color = Defs.CAT_COLORS[st.cat]
+	var g := Node3D.new()
+	g.name = "Station_" + st.cat
+	static_root.add_child(g)
+	var f: Vector3 = st.facing
+	g.global_transform = Transform3D(Basis.looking_at(-f, Vector3.UP), st.pos)   # local +Z = facing
+	var mk := func(mesh: Mesh, mat: Material, pos: Vector3) -> MeshInstance3D:
+		var mi := MeshInstance3D.new()
+		mi.mesh = mesh
+		mi.material_override = mat
+		mi.position = pos
+		g.add_child(mi)
+		return mi
+	var bm := func(sz: Vector3) -> BoxMesh:
+		var b := BoxMesh.new()
+		b.size = sz
+		return b
+	mk.call(bm.call(Vector3(2.6, 1.0, 1.0)), Mat.pbr("painted_metal", Color(0.3, 0.32, 0.3), 0.6, 0.6), Vector3(0, 0.5, 0))
+	mk.call(bm.call(Vector3(2.7, 0.05, 1.1)), Mat.solid(Color(0.25, 0.26, 0.27), 0.35, 0.9), Vector3(0, 1.025, 0))
+	mk.call(bm.call(Vector3(2.6, 0.04, 0.04)), Mat.emissive(col, 5.0), Vector3(0, 1.0, 0.52))
+	mk.call(bm.call(Vector3(2.7, 0.8, 0.05)), Mat.solid(Color(0.06, 0.06, 0.07), 0.5), Vector3(0, 2.42, -0.66))
+	if st.cat == "weapons":
+		mk.call(bm.call(Vector3(2.4, 1.3, 0.1)), Mat.solid(Color(0.15, 0.15, 0.16), 0.5, 0.8), Vector3(0, 1.8, -0.62))
+	var body := StaticBody3D.new()
+	body.collision_layer = Defs.L_WORLD
+	var cs := CollisionShape3D.new()
+	var sh := BoxShape3D.new()
+	sh.size = Vector3(2.6, 1.0, 1.0)
+	cs.shape = sh
+	cs.position.y = 0.5
+	body.add_child(cs)
+	body.set_meta("surface", "metal")
+	g.add_child(body)
+	var sign := Label3D.new()
+	sign.text = st.label
+	sign.font_size = 96
+	sign.modulate = col * 2.5
+	sign.pixel_size = 0.0036
+	sign.shaded = false
+	sign.position = Vector3(0, 2.55, -0.62)
+	g.add_child(sign)
+	var sub := Label3D.new()
+	sub.text = "[ E ]"
+	sub.font_size = 48
+	sub.pixel_size = 0.004
+	sub.position = Vector3(0, 2.25, -0.62)
+	g.add_child(sub)
+	var light := OmniLight3D.new()
+	light.light_color = col
+	light.light_energy = 1.6
+	light.omni_range = 6.0
+	light.position = Vector3(0, 2.3, 0.9)
+	g.add_child(light)
+	var ring := MeshInstance3D.new()
+	var tm := TorusMesh.new()
+	tm.inner_radius = 0.75
+	tm.outer_radius = 0.85
+	ring.mesh = tm
+	ring.scale = Vector3(1, 0.05, 1)
+	ring.material_override = Mat.emissive(col, 2.0)
+	ring.position = Vector3(0, 0.07, 1.6)
+	ring.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	g.add_child(ring)
+	match st.cat:
+		"weapons":
+			var pistol := _prop("service_pistol", Vector3.ZERO, 0.0, Vector3.ONE * 1.3)
+			if pistol:
+				pistol.reparent(g, false)
+				pistol.position = Vector3(-0.6, 1.06, 0.1)
+				pistol.rotation = Vector3(PI / 2, 0.4, 0)
+			var ab := _prop("ammo_box", Vector3.ZERO, 0.3, Vector3.ONE * 1.6)
+			if ab:
+				ab.reparent(g, false)
+				ab.position = Vector3(0.7, 1.05, 0)
+		"equipment":
+			var cr := _prop("old_military_crate", Vector3.ZERO, 0.1)
+			if cr:
+				cr.reparent(g, false)
+				cr.position = Vector3(0.2, 1.05, -0.05)
+		"air":
+			mk.call(bm.call(Vector3(0.9, 0.6, 0.05)), Mat.emissive(Color(0.1, 0.35, 0.6), 1.5), Vector3(0, 1.55, -0.55))
+
+
+func in_play(pos: Vector3, margin := 1.0) -> bool:
+	return bounds.grow(-margin).has_point(Vector2(pos.x, pos.z))
 
 
 func _build_backdrop() -> void:
@@ -615,15 +687,16 @@ func _bake_nav() -> void:
 	nm.agent_max_slope = 40.0
 	nm.cell_size = 0.25
 	nm.cell_height = 0.25
-	nm.filter_baking_aabb = AABB(Vector3(-62, -1, -62), Vector3(124, 8, 124))
+	var nb := bounds.grow(14.0) if map_id == "yard" else bounds
+	nm.filter_baking_aabb = AABB(Vector3(nb.position.x, -1, nb.position.y), Vector3(nb.size.x, 16, nb.size.y))
 	nav_region.navigation_mesh = nm
 	nav_region.bake_navigation_mesh(false)
 
 
 # ---------------------------------------------------------------- queries
 func station_near(pos: Vector3, radius := 1.7) -> Dictionary:
-	for st in STATIONS:
-		var p: Vector3 = st.pos + Vector3(0, 0, 1.6)
+	for st in stations:
+		var p: Vector3 = st.pos + (st.facing as Vector3) * 1.6
 		if Vector2(pos.x - p.x, pos.z - p.z).length() < radius:
 			return st
 	return {}
