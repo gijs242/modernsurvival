@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Modern Survival</title>
+<link rel="stylesheet" href="/css/style.css">
+<script type="importmap">
+{ "imports": { "three": "/vendor/three/build/three.module.js", "three/addons/": "/vendor/three/examples/jsm/" } }
+</script>
+</head>
+<body>
+<canvas id="c"></canvas>
+
+<!-- ============================ HUD ============================ -->
+<div id="hud" class="hidden">
+  <div id="vignette"></div>
+  <div id="dmgdirs"></div>
+
+  <div id="topleft">
+    <div id="waveLabel">WAVE <span id="waveNum">0</span></div>
+    <div id="waveSub"></div>
+  </div>
+
+  <div id="topright">
+    <div id="money">$<span id="moneyNum">0</span></div>
+    <div id="moneyFeed"></div>
+  </div>
+
+  <div id="announce"><div id="annTitle"></div><div id="annSub"></div></div>
+  <div id="combo"></div>
+  <div id="feed"></div>
+
+  <div id="crosshair"><i class="t"></i><i class="b"></i><i class="l"></i><i class="r"></i><b></b></div>
+  <div id="hitmarker"><i></i><i></i><i></i><i></i></div>
+  <div id="scope"></div>
+  <div id="designate" class="hidden">MARK TARGET<br><small>Left click: call in · Right click: cancel</small></div>
+
+  <div id="prompt"></div>
+  <div id="revive" class="hidden"><div id="reviveTitle">REVIVING</div><div class="bar"><div id="reviveFill"></div></div></div>
+  <div id="downed" class="hidden"><div class="big">YOU ARE DOWN</div><div id="downedSub"></div></div>
+
+  <div id="bottomleft">
+    <div id="team"></div>
+    <div class="stat"><span class="lbl">HP</span><div class="bar hp"><div id="hpFill"></div></div><span id="hpNum">100</span></div>
+    <div class="stat"><span class="lbl">ARMOR</span><div class="bar ar"><div id="arFill"></div></div><span id="arNum">0</span></div>
+  </div>
+
+  <div id="bottomright">
+    <div id="weaponName">Kestrel 9mm</div>
+    <div id="ammo"><span id="mag">15</span><span id="reserve">/ ∞</span></div>
+    <div id="equip"></div>
+  </div>
+
+  <div id="markers"></div>
+  <div id="minimap"><canvas id="mm" width="180" height="180"></canvas></div>
+</div>
+
+<!-- ============================ SHOP ============================ -->
+<div id="shop" class="hidden">
+  <div class="panel">
+    <div class="shopHead"><div id="shopTitle">ARMORY</div><div id="shopMoney">$0</div></div>
+    <div id="shopList"></div>
+    <div class="shopFoot">Click to buy · <b>E</b> / <b>Esc</b> to close · Wave <span id="shopWave">0</span> cleared — more unlocks every few waves</div>
+  </div>
+</div>
+
+<!-- ============================ SCOREBOARD ============================ -->
+<div id="score" class="hidden"><div class="panel"><h2>SQUAD</h2><table id="scoreTable"></table></div></div>
+
+<!-- ============================ MENUS ============================ -->
+<div id="menu" class="screen">
+  <div class="menuInner">
+    <h1>MODERN<span>SURVIVAL</span></h1>
+    <p class="tag">Hold the yard. Survive the waves. Spend wisely.</p>
+    <label>Callsign <input id="name" maxlength="16" placeholder="Soldier"></label>
+    <div class="btns">
+      <button id="btnSolo" class="primary">SINGLEPLAYER</button>
+      <button id="btnCoop">CO-OP (THIS SERVER)</button>
+    </div>
+    <div id="serverInfo"></div>
+    <details>
+      <summary>Join another server</summary>
+      <label>Address <input id="addr" placeholder="192.168.1.20:8080"></label>
+      <button id="btnJoin">JOIN</button>
+    </details>
+    <details>
+      <summary>Settings</summary>
+      <label>Graphics <select id="quality"><option value="high">High</option><option value="medium">Medium</option><option value="low">Low</option></select></label>
+      <label>Mouse sensitivity <input id="sens" type="range" min="0.2" max="3" step="0.05" value="1"></label>
+      <label>Field of view <input id="fov" type="range" min="60" max="100" step="1" value="78"></label>
+      <label>Volume <input id="vol" type="range" min="0" max="1" step="0.05" value="0.8"></label>
+    </details>
+    <div class="keys">
+      <div><b>WASD</b> move</div><div><b>Shift</b> sprint</div><div><b>Space</b> jump</div><div><b>C / Ctrl</b> crouch</div>
+      <div><b>LMB</b> fire</div><div><b>RMB</b> aim</div><div><b>R</b> reload</div><div><b>1 2 / wheel</b> weapons</div>
+      <div><b>G</b> frag</div><div><b>V</b> melee</div><div><b>E</b> armory / revive</div><div><b>F</b> ready up</div>
+      <div><b>4</b> mine</div><div><b>5</b> sentry</div><div><b>6</b> airstrike</div><div><b>7</b> gunship</div>
+      <div><b>8</b> carpet bomb</div><div><b>Tab</b> squad</div>
+    </div>
+    <div id="menuErr"></div>
+  </div>
+</div>
+
+<div id="pause" class="screen hidden">
+  <div class="menuInner small">
+    <h2>PAUSED</h2>
+    <button id="btnResume" class="primary">RESUME</button>
+    <label>Mouse sensitivity <input id="sens2" type="range" min="0.2" max="3" step="0.05" value="1"></label>
+    <label>Field of view <input id="fov2" type="range" min="60" max="100" step="1" value="78"></label>
+    <label>Volume <input id="vol2" type="range" min="0" max="1" step="0.05" value="0.8"></label>
+    <button id="btnQuit">QUIT TO MENU</button>
+  </div>
+</div>
+
+<div id="over" class="screen hidden">
+  <div class="menuInner">
+    <h1 class="red">MISSION FAILED</h1>
+    <p id="overSub"></p>
+    <table id="overTable"></table>
+    <div class="btns"><button id="btnRestart" class="primary">PLAY AGAIN</button><button id="btnQuit2">MENU</button></div>
+  </div>
+</div>
+
+<div id="loading" class="screen hidden"><div class="menuInner small"><h2>DEPLOYING…</h2></div></div>
+
+<script type="module" src="/js/main.js"></script>
+</body>
+</html>

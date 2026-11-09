@@ -1,0 +1,16 @@
+{
+  "name": "modernsurvival",
+  "version": "1.0.0",
+  "description": "Self-hosted wave-survival FPS (singleplayer + co-op) for the browser",
+  "type": "module",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "test": "node test/sim.test.js"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "three": "^0.187.0",
+    "ws": "^8.22.2"
+  }
+}
