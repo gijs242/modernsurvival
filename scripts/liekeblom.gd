@@ -25,6 +25,7 @@ func build(map: GameMap) -> void:
 		return
 	theta = float(d.mall.theta)
 	m.set_meta("theta", theta)
+	m.set_meta("entrances", d.mall.entrances)
 	var b: Array = d.bounds
 	m.bounds = Rect2(b[0], b[1], b[2] - b[0], b[3] - b[1])
 	body = StaticBody3D.new()
@@ -32,15 +33,14 @@ func build(map: GameMap) -> void:
 	body.collision_mask = 0
 	body.set_meta("surface", "concrete")
 	m.static_root.add_child(body)
-	_ground()
-	_roads_and_areas()
-	_buildings()
-	_mall_shell()
-	_mall_interior()
-	_hall()
-	_boundary()
-	_gameplay_points()
-	Dressing.new().run(m, d, body)
+	var t0 := Time.get_ticks_msec()
+	var steps := [_ground, _roads_and_areas, _buildings, _mall_shell, _mall_interior, _hall, _boundary, _gameplay_points,
+		func(): Dressing.new().run(m, d, body)]
+	var names := ["ground", "roads", "buildings", "shell", "interior", "hall", "boundary", "points", "dressing"]
+	for i in steps.size():
+		steps[i].call()
+		if OS.is_stdout_verbose() or Net.args.has("buildlog"):
+			print("[map] %s done at %d ms" % [names[i], Time.get_ticks_msec() - t0])
 
 
 # ------------------------------------------------------------------ helpers
@@ -207,6 +207,7 @@ func _buildings() -> void:
 			for p in b.footprint:
 				poly.append(Vector2(p[0], p[1]))
 			m.minimap_polys.append([poly, Color(0.55, 0.55, 0.52, 0.75)])
+	_flush_tris()
 	var cs := CollisionShape3D.new()
 	var sh := ConcavePolygonShape3D.new()
 	sh.backface_collision = true
@@ -215,11 +216,16 @@ func _buildings() -> void:
 	body.add_child(cs)
 
 
+var _tri_tools := {}       # Material -> [SurfaceTool, shadows]
+
 func _tri_mesh(mat: Material, arr: Array, faces: PackedVector3Array, shadows := true) -> void:
 	if arr.size() < 9:
 		return
-	var st := SurfaceTool.new()
-	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	if not _tri_tools.has(mat):
+		var t := SurfaceTool.new()
+		t.begin(Mesh.PRIMITIVE_TRIANGLES)
+		_tri_tools[mat] = [t, shadows]
+	var st: SurfaceTool = _tri_tools[mat][0]
 	for t in range(0, arr.size(), 9):
 		var a := Vector3(arr[t], arr[t + 1], arr[t + 2])
 		var b := Vector3(arr[t + 3], arr[t + 4], arr[t + 5])
@@ -230,11 +236,16 @@ func _tri_mesh(mat: Material, arr: Array, faces: PackedVector3Array, shadows := 
 			st.set_normal(n)
 			st.add_vertex(p)
 		faces.append_array([a, b, c])
-	var mi := MeshInstance3D.new()
-	mi.mesh = st.commit()
-	mi.material_override = mat
-	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON if shadows else GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-	m.static_root.add_child(mi)
+
+
+func _flush_tris() -> void:
+	for mat in _tri_tools:
+		var mi := MeshInstance3D.new()
+		mi.mesh = (_tri_tools[mat][0] as SurfaceTool).commit()
+		mi.material_override = mat
+		mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON if _tri_tools[mat][1] else GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		m.static_root.add_child(mi)
+	_tri_tools.clear()
 
 
 # ------------------------------------------------------------------ mall
@@ -400,6 +411,12 @@ func _shop(s: Dictionary, armory: bool) -> void:
 			var pos := back + side * (float(i) - 1.5) * 3.2
 			m.stations.append({"cat": cat, "pos": pos, "facing": -inward, "label": Defs.CAT_NAMES[cat]})
 			i += 1
+		var fill := OmniLight3D.new()
+		fill.light_color = Color(1.0, 0.96, 0.9)
+		fill.light_energy = 1.6
+		fill.omni_range = 11.0
+		fill.position = back - inward * 2.5 + Vector3(0, 2.9, 0)
+		m.static_root.add_child(fill)
 		return
 	var shelf_mat := Mat.solid(Color(0.85, 0.85, 0.83), 0.6, 0.2)
 	var area: float = s.area_game

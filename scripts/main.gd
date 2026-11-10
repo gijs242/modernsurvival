@@ -483,6 +483,8 @@ func _process(dt: float) -> void:
 
 # ======================================================================= screenshot tour (dev tool)
 var _shot_t := 0.0
+var _soldiers: Array = []
+var _shot_mark := 0.0
 var _shot_i := 0
 const SHOT_POSES := [
 	# [time, pos, yaw, pitch, name, ads, weapon]
@@ -503,20 +505,27 @@ func _liekeblom_poses() -> Array:
 	var sp: Vector3 = game.map.player_spawns[0]
 	var st: Dictionary = game.map.stations[1]
 	var f: Vector3 = st.facing
+	var e0: Array = (game.map.get_meta("entrances", []) as Array)
 	var ext: Vector3 = game.map.spawns[0]
+	if not e0.is_empty():
+		var ent := Vector3(e0[0][0], 0, e0[0][1])
+		var outward := (ent - sp).normalized()
+		ext = ent + outward * 16.0
 	var to_mall := ext - sp
 	return [
-		[3.0, sp, -th, 0.05, "hall", false, "pistol"],
-		[4.5, sp, -th + 0.9, 0.12, "hall_roof", false, "pistol"],
-		[6.0, sp, -th + PI / 2, 0.0, "corridor", false, "ar"],
-		[7.5, sp, -th + PI, 0.0, "hall_back", true, "ar"],
-		[9.0, st.pos + f * 3.4, atan2(f.x, f.z), -0.05, "armory", false, "pistol"],
-		[10.5, ext, atan2(to_mall.x, to_mall.z), 0.06, "street", false, "smg"],
+		[1.0, sp, -th, 0.05, "hall", false, "ak47"],
+		[1.5, sp, -th + 0.9, 0.12, "hall_roof", false, "scar"],
+		[2.0, sp, -th + PI / 2, 0.0, "corridor", true, "ar"],
+		[2.5, st.pos + f * 4.4, atan2(f.x, f.z), -0.05, "armory", false, "m1911"],
+		[3.0, ext, atan2(to_mall.x, to_mall.z), 0.06, "street", false, "g3a3"],
+		[3.5, ext, atan2(to_mall.x, to_mall.z) + 2.2, 0.03, "street2", false, "mg250"],
 	]
 
 
 func _shots(dt: float) -> void:
 	_shot_t += dt
+	if Engine.get_process_frames() % 15 == 0:
+		print("[shots] frame %d t=%.2f wall=%ds" % [Engine.get_process_frames(), _shot_t, Time.get_ticks_msec() / 1000])
 	if game == null:
 		return
 	var lp: Player = game.player_nodes.get(game.local_id)
@@ -542,9 +551,34 @@ func _shots(dt: float) -> void:
 		if _shot_t >= pose[0]:
 			_capture(pose[4])
 			_shot_i += 1
-			if _shot_i == poses.size():
+			if _shot_i == poses.size() and game.map.map_id == "yard":
 				game.timer = 0.5
 				autotest_t = 1e9
+	elif game.map.map_id != "yard" and _shot_i < poses.size() + 3:
+		var k := _shot_i - poses.size()
+		var fwd := Vector3(-sin(lp.yaw), 0, -cos(lp.yaw))
+		if k == 0 and _soldiers.is_empty():
+			for j in 3:
+				game._spawn_enemy(["rifleman", "grunt", "shotgunner"][j])
+				var e: Enemy = game.enemies.values()[game.enemies.size() - 1]
+				e.global_position = lp.global_position + fwd * (3.2 + j * 1.6) + Vector3(-fwd.z, 0, fwd.x) * (j - 1) * 1.3
+				e.set_physics_process(false)
+				e.rotation.y = lp.yaw + PI + (j - 1) * 0.5
+				_soldiers.append(e)
+			_shot_mark = _shot_t
+		elif k == 0 and _shot_t - _shot_mark > 0.4:
+			_capture("soldiers")
+			_shot_i += 1
+		elif k == 1:
+			game._damage_enemy(_soldiers[0], 9999.0, p, {"head": true})
+			game._damage_enemy(_soldiers[1], 9999.0, p, {"expl": true})
+			_shot_mark = _shot_t
+			_shot_i += 1
+		elif k == 2 and _shot_t - _shot_mark > 1.2:
+			_capture("ragdolls")
+			_shot_i += 1
+			if Net.args.has("shots_quit"):
+				get_tree().quit(0)
 	else:
 		_autotest(dt)
 		if game.enemies.size() >= 4 and _shot_t > 30.0 and _shot_i < 20 and fmod(_shot_t, 3.0) < dt:

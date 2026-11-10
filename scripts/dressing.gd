@@ -32,15 +32,18 @@ func run(map: GameMap, data: Dictionary, static_body: StaticBody3D) -> void:
 			continue
 		for i in r.pts.size() - 1:
 			road_segs.append([Vector2(r.pts[i][0], r.pts[i][1]), Vector2(r.pts[i + 1][0], r.pts[i + 1][1]), widths[r.kind] * 0.5, r.kind])
-	_kerbs()
-	_street_trees()
-	_green_areas()
-	_wall_weeds()
-	_street_furniture()
-	_service_clutter()
-	_mall_props()
-	_flush()
-	_decals()
+	var t0 := Time.get_ticks_msec()
+	var log := Net.args.has("buildlog")
+	for step in [["kerbs", _kerbs], ["trees", _street_trees], ["green", _green_areas], ["weeds", _wall_weeds],
+			["furniture", _street_furniture], ["clutter", _service_clutter], ["mall", _mall_props], ["flush", _flush], ["decals", _decals]]:
+		step[1].call()
+		if log:
+			print("[dress] %s done at %d ms" % [step[0], Time.get_ticks_msec() - t0])
+	if log:
+		var counts := {}
+		for k in batches:
+			counts[k] = batches[k].size()
+		print("[dress] placed: ", counts)
 
 
 # ------------------------------------------------------------------ queries

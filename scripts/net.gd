@@ -35,7 +35,10 @@ func _ready() -> void:
 		map_id = str(args.map)
 	# clients learn the map from the server before building the level
 	multiplayer.peer_connected.connect(func(id):
-		if multiplayer.is_server() and multiplayer.multiplayer_peer is ENetMultiplayerPeer:
+		var ep := multiplayer.multiplayer_peer as ENetMultiplayerPeer
+		if ep and ep.get_peer(id):
+			ep.get_peer(id).set_timeout(32, 30000, 60000)   # tolerate long level loads without dropping
+		if multiplayer.is_server() and ep:
 			_server_info.rpc_id(id, map_id))
 	multiplayer.connection_failed.connect(func(): failed.emit("Could not connect to server"); _reset())
 	multiplayer.server_disconnected.connect(func(): disconnected.emit(); _reset())
@@ -44,7 +47,7 @@ func _ready() -> void:
 @rpc("authority", "call_remote", "reliable")
 func _server_info(m: String) -> void:
 	map_id = m
-	connected.emit()
+	connected.emit.call_deferred()      # build the level outside the network callback
 
 
 func is_dedicated() -> bool:

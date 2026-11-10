@@ -106,8 +106,13 @@ func c_events(list: Array) -> void:
 		_on_event(e)
 
 
+var _snaps_rx := 0
+
 @rpc("authority", "call_remote", "unreliable_ordered")
 func c_snap(s: Dictionary) -> void:
+	_snaps_rx += 1
+	if _snaps_rx == 1 and Net.args.has("buildlog"):
+		print("[game] first snapshot received")
 	_apply_snapshot(s)
 
 
@@ -180,6 +185,8 @@ func _handle(id: int, m: Dictionary) -> void:
 		id = local_id
 	var t: String = m.get("t", "")
 	if t == "join":
+		if Net.args.has("buildlog"):
+			print("[game] join from %d" % id)
 		_add_player(id, str(m.get("name", "Soldier")))
 		return
 	if not P.has(id):
@@ -597,15 +604,26 @@ func _physics_process(dt: float) -> void:
 			events = []
 			for e in list:
 				_on_event(e)
-			if multiplayer.get_peers().size() > 0:
-				c_events.rpc(list)
+			for pid in _remote_joined():
+				c_events.rpc_id(pid, list)
 		snap_t -= dt
 		if snap_t <= 0.0:
 			snap_t = 1.0 / SNAP_HZ
 			var s := _snapshot()
 			_apply_snapshot(s)
-			if multiplayer.get_peers().size() > 0:
-				c_snap.rpc(s)
+			for pid in _remote_joined():
+				c_snap.rpc_id(pid, s)
+
+
+## Remote peers that have finished loading the map and joined (only they receive game traffic;
+## sending to a peer still building the level breaks Godot's RPC path cache for that node).
+func _remote_joined() -> Array:
+	var out := []
+	var peers := multiplayer.get_peers()
+	for id in P:
+		if id != local_id and id in peers:
+			out.append(id)
+	return out
 
 
 func _server_tick(dt: float) -> void:

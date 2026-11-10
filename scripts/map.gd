@@ -592,9 +592,11 @@ func _armory_station(st: Dictionary) -> void:
 	g.add_child(body)
 	var sign := Label3D.new()
 	sign.text = st.label
-	sign.font_size = 96
-	sign.modulate = col * 2.5
-	sign.pixel_size = 0.0036
+	sign.font_size = 72
+	sign.modulate = col * 2.2
+	sign.pixel_size = 0.0028
+	sign.width = 900
+	sign.autowrap_mode = TextServer.AUTOWRAP_WORD
 	sign.shaded = false
 	sign.position = Vector3(0, 2.55, -0.62)
 	g.add_child(sign)
@@ -605,9 +607,9 @@ func _armory_station(st: Dictionary) -> void:
 	sub.position = Vector3(0, 2.25, -0.62)
 	g.add_child(sub)
 	var light := OmniLight3D.new()
-	light.light_color = col
-	light.light_energy = 1.6
-	light.omni_range = 6.0
+	light.light_color = col.lerp(Color.WHITE, 0.55)
+	light.light_energy = 0.7
+	light.omni_range = 4.5
 	light.position = Vector3(0, 2.3, 0.9)
 	g.add_child(light)
 	var ring := MeshInstance3D.new()
