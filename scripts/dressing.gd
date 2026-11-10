@@ -70,35 +70,53 @@ func place(name: String, pos: Vector3, yaw := 0.0, scale := 1.0, collider := "")
 		colliders[name] = collider
 
 
+## One MultiMesh per prop part per CHUNK-sized square: lets the renderer frustum- and occlusion-cull the props
+## and pick a mesh LOD per chunk (a single map-wide MultiMesh is always drawn in full, at full detail).
+const CHUNK := 12.0
+
 func flush() -> void:
+	var stats := {}
 	for name in batches:
 		var parts := _meshes_of(name)
-		var xfs: Array = batches[name]
+		var all: Array = batches[name]
 		if parts.is_empty():
 			continue
+		var groups := {}
+		for xf in all:
+			var o: Vector3 = (xf as Transform3D).origin
+			var cell := Vector2i(floori(o.x / CHUNK), floori(o.z / CHUNK))
+			if not groups.has(cell):
+				groups[cell] = []
+			groups[cell].append(xf)
+		var tris := 0
 		for part in parts:
 			var mesh: Mesh = part[0]
 			var lxf: Transform3D = part[1]
-			var mm := MultiMesh.new()
-			mm.transform_format = MultiMesh.TRANSFORM_3D
-			mm.mesh = mesh
-			mm.instance_count = xfs.size()
-			for i in xfs.size():
-				mm.set_instance_transform(i, xfs[i] * lxf)
-			var mmi := MultiMeshInstance3D.new()
-			mmi.multimesh = mm
+			for i in mesh.get_surface_count():
+				tris += mesh.surface_get_array_len(i) / 3 if mesh.surface_get_array_index_len(i) <= 0 else mesh.surface_get_array_index_len(i) / 3
 			# only bigger props cast shadows below Ultra (shadow passes were a big GPU cost)
-			var big := mesh.get_aabb().size.y * (xfs[0] as Transform3D).basis.get_scale().y > 0.9
-			mmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON if (big or m.quality >= 3) else GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-			mmi.visibility_range_end = 70.0 if big else 40.0
-			mmi.visibility_range_end_margin = 6.0
-			mmi.visibility_range_fade_mode = GeometryInstance3D.VISIBILITY_RANGE_FADE_SELF
-			m.static_root.add_child(mmi)
+			var big := mesh.get_aabb().size.y * (all[0] as Transform3D).basis.get_scale().y > 0.9
+			for cell in groups:
+				var xfs: Array = groups[cell]
+				var mm := MultiMesh.new()
+				mm.transform_format = MultiMesh.TRANSFORM_3D
+				mm.mesh = mesh
+				mm.instance_count = xfs.size()
+				for i in xfs.size():
+					mm.set_instance_transform(i, xfs[i] * lxf)
+				var mmi := MultiMeshInstance3D.new()
+				mmi.multimesh = mm
+				mmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON if (big or m.quality >= 3) else GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+				mmi.visibility_range_end = 70.0 if big else 35.0
+				mmi.visibility_range_end_margin = 6.0
+				mmi.visibility_range_fade_mode = GeometryInstance3D.VISIBILITY_RANGE_FADE_SELF
+				m.static_root.add_child(mmi)
+		stats[name] = "%d x %d tris" % [all.size(), tris]
 		var kind: String = colliders.get(name, "")
 		if kind == "":
 			continue
 		var aabb: AABB = aabb_cache[name]
-		for xf in xfs:
+		for xf in all:
 			var s: float = (xf as Transform3D).basis.get_scale().x
 			var cs := CollisionShape3D.new()
 			if kind == "cyl":
@@ -113,6 +131,8 @@ func flush() -> void:
 				cs.shape = bx
 				cs.transform = Transform3D((xf as Transform3D).basis.orthonormalized(), (xf as Transform3D) * aabb.get_center())
 			body.add_child(cs)
+	if Net.args.has("buildlog"):
+		print("[dress] ", stats)
 
 
 # ------------------------------------------------------------------ floor grime decals

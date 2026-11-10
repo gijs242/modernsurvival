@@ -222,7 +222,7 @@ void sky() {
 	env.sky = sky
 	env.ambient_light_source = Environment.AMBIENT_SOURCE_SKY
 	env.ambient_light_energy = 0.55
-	env.ambient_light_sky_contribution = 0.85
+	env.ambient_light_sky_contribution = 0.85 if map_id != "mall" else 0.6
 	env.reflected_light_source = Environment.REFLECTION_SOURCE_SKY
 	env.tonemap_mode = Environment.TONE_MAPPER_AGX
 	env.tonemap_exposure = 0.92
@@ -280,7 +280,7 @@ void sky() {
 	sun.shadow_normal_bias = 1.2
 	sun.shadow_blur = 1.2
 	sun.directional_shadow_mode = DirectionalLight3D.SHADOW_PARALLEL_4_SPLITS
-	sun.directional_shadow_max_distance = [55.0, 60.0, 70.0, 90.0, 130.0][clampi(quality + 1, 0, 4)]
+	sun.directional_shadow_max_distance = _shadow_dist(quality)
 	if quality < 0:
 		sun.directional_shadow_mode = DirectionalLight3D.SHADOW_PARALLEL_2_SPLITS
 		env.fog_aerial_perspective = 0.0
@@ -289,13 +289,28 @@ void sky() {
 	sun.look_at_from_position(SUN_DIR * 100.0, Vector3.ZERO, Vector3.UP)
 
 
+## The Mall is indoors (sunlight only falls through the hall's glass roof): short shadow range = sharper and cheaper.
+func _shadow_dist(q: int) -> float:
+	if map_id == "mall":
+		return [35.0, 40.0, 45.0, 55.0, 70.0][clampi(q + 1, 0, 4)]
+	return [55.0, 60.0, 70.0, 90.0, 130.0][clampi(q + 1, 0, 4)]
+
+
 # ---------------------------------------------------------------- geometry helpers
+## Static geometry is merged per material, but in CHUNK-sized squares so the renderer can still cull what's
+## off-screen or behind walls (one map-wide mesh per material was drawn whole every frame, shadows included).
+const CHUNK := 12.0
+
 func _merge_add(mat: Material, mesh: Mesh, xf: Transform3D) -> void:
+	var cell := Vector2i(floori(xf.origin.x / CHUNK), floori(xf.origin.z / CHUNK))
 	if not _merge.has(mat):
+		_merge[mat] = {}
+	var cells: Dictionary = _merge[mat]
+	if not cells.has(cell):
 		var st := SurfaceTool.new()
 		st.begin(Mesh.PRIMITIVE_TRIANGLES)
-		_merge[mat] = st
-	(_merge[mat] as SurfaceTool).append_from(mesh, 0, xf)
+		cells[cell] = st
+	(cells[cell] as SurfaceTool).append_from(mesh, 0, xf)
 
 
 func _merge_box(mat: Material, size: Vector3, center: Vector3, rot_y := 0.0) -> void:
@@ -306,13 +321,16 @@ func _merge_box(mat: Material, size: Vector3, center: Vector3, rot_y := 0.0) -> 
 
 func _flush_merge() -> void:
 	for mat in _merge:
-		var st: SurfaceTool = _merge[mat]
-		st.generate_tangents()
-		var mi := MeshInstance3D.new()
-		mi.mesh = st.commit()
-		mi.material_override = mat
-		mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
-		static_root.add_child(mi)
+		for cell in _merge[mat]:
+			var st: SurfaceTool = _merge[mat][cell]
+			st.generate_tangents()
+			var mi := MeshInstance3D.new()
+			mi.mesh = st.commit()
+			mi.material_override = mat
+			# small detail (books, fruit, garments...) doesn't need to be in the sun's shadow maps
+			var big: bool = mi.mesh.get_aabb().size.y > 0.6 or mi.mesh.get_aabb().size.x > 3.0
+			mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON if big else GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+			static_root.add_child(mi)
 	_merge.clear()
 
 
@@ -760,7 +778,7 @@ func apply_quality(q: int) -> void:
 	env.sdfgi_enabled = q >= 2
 	env.glow_enabled = q >= 1
 	env.volumetric_fog_enabled = q >= 3
-	sun.directional_shadow_max_distance = [55.0, 60.0, 70.0, 90.0, 130.0][clampi(q + 1, 0, 4)]
+	sun.directional_shadow_max_distance = _shadow_dist(q)
 	sun.directional_shadow_mode = DirectionalLight3D.SHADOW_PARALLEL_4_SPLITS if q >= 0 else DirectionalLight3D.SHADOW_PARALLEL_2_SPLITS
 	if q < 0:
 		for l in find_children("*", "OmniLight3D", true, false):
@@ -807,7 +825,8 @@ func _apply_daylight() -> void:
 	env.tonemap_exposure = _k3(0.92, 1.12, 1.35, t)
 	var fogc: Color = _k3(Color(0.62, 0.64, 0.68), Color(0.78, 0.56, 0.42), Color(0.04, 0.06, 0.1), t)
 	env.fog_light_color = fogc.lerp(Color(0.55, 0.55, 0.55), smoke_k)
-	env.fog_density = lerpf(0.0011, 0.028, smoke_k) + (0.0008 if t > 1.2 else 0.0)
+	# indoors there's no distance haze: much thinner fog on the Mall (smoke waves still fill it up)
+	env.fog_density = lerpf(0.0011 if map_id != "mall" else 0.0003, 0.028, smoke_k) + (0.0008 if t > 1.2 else 0.0)
 	env.volumetric_fog_density = lerpf(0.0025, 0.03, smoke_k)
 	env.volumetric_fog_albedo = Color(0.85, 0.82, 0.78) * (1.0 if t < 1.5 else 0.4)
 	if sky_mat:

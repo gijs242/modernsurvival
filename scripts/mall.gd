@@ -23,6 +23,7 @@ var rng := RandomNumberGenerator.new()
 var segs: Array = []            # [Vector2 a, Vector2 b] every wall, for clearance / line-of-reach tests
 var taken: Array = []           # [Vector2 centre, radius] already used floor space
 var hall_polys: Array = []      # PackedVector2Array strips of the main hall
+var occluders: Array = []      # [size, Transform3D] solid walls for occlusion culling
 var u_axis := Vector3.RIGHT     # the building's main axes
 var v_axis := Vector3.BACK
 
@@ -62,12 +63,191 @@ func build(map: GameMap) -> void:
 				poly.append(Vector2(p[0], p[1]))
 			hall_polys.append(poly)
 	var t0 := Time.get_ticks_msec()
-	var steps := [_ground, _buildings, _mall_shell, _bays, _mall_interior, _hall, _boundary, _gameplay_points, _cover, dress.flush]
-	var names := ["ground", "building", "shell", "bays", "interior", "hall", "boundary", "points", "cover", "props"]
+	var steps := [_ground, _buildings, _mall_shell, _bays, _mall_interior, _hall, _boundary, _gameplay_points, _cover, _lighting_details, dress.flush, _occlusion]
+	var names := ["ground", "building", "shell", "bays", "interior", "hall", "boundary", "points", "cover", "lighting", "props", "occluders"]
 	for i in steps.size():
 		steps[i].call()
 		if OS.is_stdout_verbose() or Net.args.has("buildlog"):
 			print("[map] %s done at %d ms" % [names[i], Time.get_ticks_msec() - t0])
+
+
+## Every solid wall as one occluder mesh: indoors, most of the map is hidden behind walls at any moment and
+## the renderer can skip it (project setting rendering/occlusion_culling/use_occlusion_culling).
+func _occlusion() -> void:
+	if Net.is_dedicated() or occluders.is_empty():
+		return
+	var verts := PackedVector3Array()
+	var idx := PackedInt32Array()
+	var quads := [[0, 1, 3, 2], [4, 6, 7, 5], [0, 4, 5, 1], [2, 3, 7, 6], [0, 2, 6, 4], [1, 5, 7, 3]]
+	for o in occluders:
+		var h: Vector3 = (o[0] as Vector3) * 0.5
+		var xf: Transform3D = o[1]
+		var base := verts.size()
+		for k in 8:
+			verts.append(xf * Vector3(h.x if k & 1 else -h.x, h.y if k & 2 else -h.y, h.z if k & 4 else -h.z))
+		for q in quads:
+			idx.append_array([base + q[0], base + q[1], base + q[2], base + q[0], base + q[2], base + q[3]])
+	var occ := ArrayOccluder3D.new()
+	occ.set_arrays(verts, idx)
+	var oi := OccluderInstance3D.new()
+	oi.occluder = occ
+	m.static_root.add_child(oi)
+	if OS.is_stdout_verbose() or Net.args.has("buildlog"):
+		print("[map] occluders: %d wall boxes" % occluders.size())
+
+
+# ------------------------------------------------------------------ lighting details
+## Recessed ceiling light panels (emissive, no real light: they're free to draw and read as a lit store), and
+## interior reflection probes: correct reflections on the polished floors instead of the sky, plus local ambient
+## light so rooms aren't lit flat by the sky. Probes render once at load.
+func _lighting_details() -> void:
+	if Net.is_dedicated():
+		return
+	var panel := Mat.emissive(Color(1.0, 0.97, 0.9), 2.2)
+	var trim := Mat.solid(Color(0.85, 0.85, 0.85), 0.4, 0.2)
+	var ceil_polys: Array = []
+	for c in d.mall.ceilings:
+		var poly := PackedVector2Array()
+		for q in c.pts:
+			poly.append(Vector2(q[0], q[1]))
+		ceil_polys.append([poly, float(c.h)])
+	var ceiling_at := func(p: Vector2) -> float:
+		for cp in ceil_polys:
+			if Geometry2D.is_point_in_polygon(p, cp[0]):
+				return cp[1]
+		return -1.0
+	var count := 0
+	for sh in d.mall.shops:
+		if sh.door == null:
+			continue
+		var door := _v(sh.door)
+		var n := Vector3(sh.inward[0], 0, sh.inward[1]).normalized()
+		var t := Vector3(-n.z, 0, n.x)
+		var c := _v(sh.center)
+		var depth: float = clampf(2.0 * (c - door).dot(n), 4.0, 45.0)
+		var width: float = clampf(float(sh.area_game) / depth * 1.15, 5.0, 45.0)
+		var step := 3.6 if sh.kind != "supermarket" else 4.8
+		var dist := 2.0
+		while dist < depth - 0.6:
+			var off := -width * 0.5 + 1.2
+			while off < width * 0.5 - 1.0:
+				var p := door + n * dist + t * off
+				var h: float = ceiling_at.call(_v2(p))
+				if h > 0.0 and _reach(_v2(door + n * 0.6), _v2(p)):
+					var basis := Basis.looking_at(n, Vector3.UP)
+					var bm := BoxMesh.new()
+					bm.size = Vector3(0.62, 0.02, 1.22)
+					m._merge_add(trim, bm, Transform3D(basis, p + Vector3(0, h - 0.012, 0)))
+					var lm := BoxMesh.new()
+					lm.size = Vector3(0.56, 0.02, 1.16)
+					m._merge_add(panel, lm, Transform3D(basis, p + Vector3(0, h - 0.02, 0)))
+					count += 1
+				off += step
+			dist += step
+		# one probe per shop, box-projected to the room
+		var probe := ReflectionProbe.new()
+		probe.size = Vector3(width, 3.4, depth)
+		probe.position = door + n * depth * 0.5 + Vector3(0, 1.6, 0)
+		probe.basis = Basis.looking_at(n, Vector3.UP)
+		_setup_probe(probe, Color(1.0, 0.93, 0.82), 0.45)
+	# corridors: strip lights along the centre line, a probe every ~14 m
+	for line in d.mall.corridors:
+		for i in line.size() - 1:
+			var a := Vector3(line[i][0], 0, line[i][1])
+			var b := Vector3(line[i + 1][0], 0, line[i + 1][1])
+			var L := a.distance_to(b)
+			var dir := (b - a) / maxf(L, 0.01)
+			var k := 2.0
+			while k < L - 1.0:
+				var p := a + dir * k
+				if not _in_hall(_v2(p)):
+					var bm := BoxMesh.new()
+					bm.size = Vector3(0.22, 0.04, 2.2)
+					m._merge_add(panel, bm, Transform3D(Basis.looking_at(dir, Vector3.UP), p + Vector3(0, 3.92, 0)))
+					count += 1
+				k += 4.0
+			var segs_n := maxi(1, int(L / 14.0))
+			for j in segs_n:
+				var pc := a.lerp(b, (j + 0.5) / segs_n)
+				if _in_hall(_v2(pc)):
+					continue
+				var probe := ReflectionProbe.new()
+				probe.size = Vector3(7.0, 4.4, L / segs_n + 1.0)
+				probe.position = pc + Vector3(0, 2.0, 0)
+				probe.basis = Basis.looking_at(dir, Vector3.UP)
+				_setup_probe(probe, Color(0.95, 0.95, 1.0), 0.5)
+	# the hall: one big probe under the glass roof (lets the sky in)
+	var hall_pts: Array = []
+	for poly in hall_polys:
+		for q in poly:
+			hall_pts.append(Vector3(q.x, 0, q.y))
+	if not hall_pts.is_empty():
+		var umin := 1e9
+		var umax := -1e9
+		var vmin := 1e9
+		var vmax := -1e9
+		for p3 in hall_pts:
+			umin = minf(umin, p3.dot(u_axis))
+			umax = maxf(umax, p3.dot(u_axis))
+			vmin = minf(vmin, p3.dot(v_axis))
+			vmax = maxf(vmax, p3.dot(v_axis))
+		var probe := ReflectionProbe.new()
+		probe.size = Vector3(umax - umin, 9.0, vmax - vmin)
+		probe.position = u_axis * (umin + umax) * 0.5 + v_axis * (vmin + vmax) * 0.5 + Vector3(0, 3.0, 0)
+		probe.basis = Basis(u_axis, Vector3.UP, v_axis)
+		probe.interior = false
+		probe.update_mode = ReflectionProbe.UPDATE_ONCE
+		probe.box_projection = true
+		probe.max_distance = 60.0
+		probe.cull_mask = 1
+		probe.blend_distance = 3.0
+		m.static_root.add_child(probe)
+	if OS.is_stdout_verbose() or Net.args.has("buildlog"):
+		print("[map] ceiling lights: %d" % count)
+
+
+func _setup_probe(probe: ReflectionProbe, ambient: Color, energy: float) -> void:
+	if m.quality < 0:
+		return
+	probe.interior = true
+	probe.update_mode = ReflectionProbe.UPDATE_ONCE
+	probe.box_projection = true
+	probe.max_distance = 30.0
+	probe.cull_mask = 1                 # world only, not the viewmodel
+	probe.blend_distance = 1.5
+	probe.ambient_mode = ReflectionProbe.AMBIENT_COLOR
+	probe.ambient_color = ambient
+	probe.ambient_color_energy = energy
+	probe.intensity = 1.0
+	m.static_root.add_child(probe)
+
+
+# ------------------------------------------------------------------ props
+## Place a scanned prop, except for the few that are far too detailed for clutter: a 17k-triangle cardboard box
+## becomes a modelled carton (a dozen triangles, merged into the static mesh).
+func _place(name: String, pos: Vector3, yaw := 0.0, scale := 1.0, collider := "") -> void:
+	if name == "cardboard_box_01":
+		_carton(pos, yaw, scale, collider != "")
+		return
+	dress.place(name, pos, yaw, scale, collider)
+
+
+var _carton_mats: Array = []
+func _carton(pos: Vector3, yaw: float, scale: float, collide: bool) -> void:
+	if _carton_mats.is_empty():
+		for c in [Color(0.66, 0.5, 0.32), Color(0.6, 0.45, 0.28), Color(0.72, 0.58, 0.4)]:
+			_carton_mats.append(Mat.pbr("burlap", c * 1.25, 0.95, 0.0, 0.3))
+		_carton_mats.append(Mat.solid(Color(0.75, 0.68, 0.5), 0.45))      # packing tape
+	var size := Vector3(rng.randf_range(0.4, 0.62), rng.randf_range(0.3, 0.48), rng.randf_range(0.35, 0.55)) * scale
+	var basis := Basis(Vector3.UP, yaw)
+	var bm := BoxMesh.new()
+	bm.size = size
+	m._merge_add(_carton_mats[rng.randi() % 3], bm, Transform3D(basis, pos + Vector3(0, size.y * 0.5, 0)))
+	var tape := BoxMesh.new()
+	tape.size = Vector3(0.06, 0.004, size.z + 0.004)
+	m._merge_add(_carton_mats[3], tape, Transform3D(basis, pos + Vector3(0, size.y + 0.001, 0)))
+	if collide and not dress._near_door(_v2(pos)):
+		_box_col(size, Transform3D(basis, pos + Vector3(0, size.y * 0.5, 0)))
 
 
 # ------------------------------------------------------------------ floor-space queries
@@ -152,6 +332,8 @@ func _wall(mat: Material, a: Vector3, b: Vector3, y0: float, y1: float, thick: f
 	m._merge_add(mat, bm, xf)
 	if collide:
 		_box_col(size, xf)
+	if collide and thick >= 0.15 and y1 - y0 >= 2.0:
+		occluders.append([size, xf])
 
 
 func _poly_mesh(mat: Material, pts: Array, y: float, flip := false) -> void:
@@ -302,8 +484,16 @@ func _mall_shell() -> void:
 			_wall(_glass_mat(), a + dir * (d1 - 0.6), a + dir * d1, 0.0, 2.7, 0.08, false)
 			t = d1
 		_wall(outer, a + dir * t, b, 0.0, h, 0.35)
-		if h < gf - 0.05:
-			pass
+		# painted plaster on the inside face (it used to show bare outside brick in every shop)
+		var inn := Vector3(-dir.z, 0, dir.x)
+		var mid := (a + b) * 0.5
+		if not Geometry2D.is_point_in_polygon(Vector2(mid.x + inn.x * 0.6, mid.z + inn.z * 0.6), _footprint2()):
+			inn = -inn
+		var t2 := 0.0
+		for c in cuts:
+			_wall(_inner_mat(), a + dir * t2 + inn * 0.2, a + dir * maxf(t2, float(c) - 1.6) + inn * 0.2, 0.0, minf(h, 4.2), 0.04, false)
+			t2 = minf(L, float(c) + 1.6)
+		_wall(_inner_mat(), a + dir * t2 + inn * 0.2, b + inn * 0.2, 0.0, minf(h, 4.2), 0.04, false)
 	m.set_meta("doors", door_list)
 	var poly := _footprint2()
 	m.minimap_polys.append([poly, Color(0.42, 0.42, 0.4, 0.75)])
@@ -352,6 +542,13 @@ func _glass_mat() -> StandardMaterial3D:
 		_gm.roughness = 0.03
 		_gm.metallic = 0.6
 	return _gm
+
+
+var _im: Material
+func _inner_mat() -> Material:
+	if _im == null:
+		_im = Mat.world("plaster", Color(0.97, 0.95, 0.91), 0.35, 1.0, 0.0, 0.35)
+	return _im
 
 
 var _fm: Material
@@ -505,9 +702,9 @@ func _shop(s: Dictionary, armory: bool) -> void:
 		m.add_light(fill, fill.position + Vector3(0, 0.12, 0))
 		# the gun shop fit-out: crates of stock, a generator, ammo
 		for k in [-1.0, 1.0]:
-			_try_place(back + side * 7.6 * k - inward * 0.5, 0.8, func(p: Vector3): dress.place("wooden_military_crate", p, atan2(side.x, side.z), 1.0, "box"))
-			_try_place(back + side * 7.0 * k - inward * 2.4, 0.7, func(p: Vector3): dress.place("old_military_crate", p, rng.randf() * TAU, 1.0, "box"))
-		_try_place(back + side * 6.4 - inward * 4.2, 0.8, func(p: Vector3): dress.place("portable_generator", p, rng.randf() * TAU, 1.0, "box"))
+			_try_place(back + side * 7.6 * k - inward * 0.5, 0.8, func(p: Vector3): _place("wooden_military_crate", p, atan2(side.x, side.z), 1.0, "box"))
+			_try_place(back + side * 7.0 * k - inward * 2.4, 0.7, func(p: Vector3): _place("old_military_crate", p, rng.randf() * TAU, 1.0, "box"))
+		_try_place(back + side * 6.4 - inward * 4.2, 0.8, func(p: Vector3): _place("portable_generator", p, rng.randf() * TAU, 1.0, "box"))
 		return
 	m.set_meta("shop_views", m.get_meta("shop_views", []) + [[door - inward * 2.0, inward]])
 	var depth: float = clampf(2.0 * (c - door).dot(inward), 4.0, 45.0)
@@ -597,11 +794,11 @@ func _mix(f: Dictionary, row: float, col: float, items: Array, limit := 999) -> 
 
 
 func _desk(p: Vector3, along: Vector3) -> void:
-	var name := "metal_office_desk" if rng.randf() < 0.5 else "drawer_cabinet"
+	var name := "metal_office_desk" if rng.randf() < 0.5 else "painted_wooden_cabinet"
 	if Dressing.has_prop(name):
-		dress.place(name, p, atan2(along.x, along.z), 1.0, "box")
+		_place(name, p, atan2(along.x, along.z), 1.0, "box")
 		if name == "metal_office_desk":
-			dress.place("side_table_01", p + along * 1.2, rng.randf() * TAU, 1.0)
+			_place("side_table_01", p + along * 1.2, rng.randf() * TAU, 1.0)
 	else:
 		_boxes(p)
 
@@ -695,7 +892,7 @@ func _counter(p: Vector3, along: Vector3) -> float:
 	_part(_mat("white"), Vector3(0.82, 0.04, 2.3), p, along, 1.0)
 	_col(Vector3(0.75, 1.05, 2.2), p, along)
 	var basis := Basis.looking_at(along, Vector3.UP)
-	dress.place("CashRegister_01", p + basis * Vector3(0, 1.04, 0.5), atan2(along.x, along.z), 1.0)
+	_place("CashRegister_01", p + basis * Vector3(0, 1.04, 0.5), atan2(along.x, along.z), 1.0)
 	_claim(_v2(p), 1.3)
 	return 2.4
 
@@ -875,8 +1072,8 @@ func _tv_stand(p: Vector3, face: Vector3) -> float:
 	var cab := "painted_wooden_cabinet" if Dressing.has_prop("painted_wooden_cabinet") else ""
 	if cab != "":
 		var h := dress.size_of(cab).y
-		dress.place(cab, p, atan2(face.x, face.z), 1.0, "box")
-		dress.place("Television_01", p + Vector3(0, h, 0), atan2(face.x, face.z), 1.0)
+		_place(cab, p, atan2(face.x, face.z), 1.0, "box")
+		_place("Television_01", p + Vector3(0, h, 0), atan2(face.x, face.z), 1.0)
 	else:
 		_part(_mat("dark_wood"), Vector3(0.5, 0.8, 1.4), p, Vector3(-face.z, 0, face.x))
 		_col(Vector3(0.5, 0.8, 1.4), p, Vector3(-face.z, 0, face.x))
@@ -905,10 +1102,10 @@ func _easel(p: Vector3, face: Vector3) -> float:
 func _home_shelf(p: Vector3, along: Vector3) -> float:
 	var name := "painted_wooden_shelves" if rng.randf() < 0.5 else "Shelf_01"
 	if Dressing.has_prop(name):
-		dress.place(name, p, atan2(along.x, along.z), 1.0, "box")
+		_place(name, p, atan2(along.x, along.z), 1.0, "box")
 		var sz := dress.size_of(name)
 		if rng.randf() < 0.4:
-			dress.place(["cardboard_box_01", "plastic_crate_03"][rng.randi() % 2], p + Vector3(0, sz.y + 0.01, 0), rng.randf() * TAU, 0.6)
+			_place(["cardboard_box_01", "plastic_crate_02"][rng.randi() % 2], p + Vector3(0, sz.y + 0.01, 0), rng.randf() * TAU, 0.6)
 		return maxf(sz.x, sz.z) + 0.3
 	_shelf(Mat.solid(Color(0.85, 0.85, 0.83), 0.6, 0.2), p, along, 2.5)
 	return 2.5
@@ -917,16 +1114,16 @@ func _home_shelf(p: Vector3, along: Vector3) -> float:
 func _lounge(p: Vector3, face: Vector3) -> float:
 	var yaw := atan2(face.x, face.z)
 	var side := Vector3(-face.z, 0, face.x)
-	dress.place("Sofa_01", p + face * 0.9, yaw + PI, 1.0, "box")
-	dress.place("modern_coffee_table_01", p, yaw, 1.0, "box")
-	dress.place(["ArmChair_01", "modern_arm_chair_01"][rng.randi() % 2], p + side * 1.3, yaw - PI / 2, 1.0, "box")
+	_place("Sofa_01", p + face * 0.9, yaw + PI, 1.0, "box")
+	_place("modern_coffee_table_01", p, yaw, 1.0, "box")
+	_place(["ArmChair_01", "modern_arm_chair_01"][rng.randi() % 2], p + side * 1.3, yaw - PI / 2, 1.0, "box")
 	return 3.0
 
 
 func _boxes(p: Vector3) -> float:
 	var n := rng.randi_range(1, 3)
 	for k in n:
-		dress.place("cardboard_box_01", p + Vector3(rng.randf_range(-0.4, 0.4), 0, rng.randf_range(-0.4, 0.4)), rng.randf() * TAU, rng.randf_range(0.8, 1.1), "box" if k == 0 else "")
+		_place("cardboard_box_01", p + Vector3(rng.randf_range(-0.4, 0.4), 0, rng.randf_range(-0.4, 0.4)), rng.randf() * TAU, rng.randf_range(0.8, 1.1), "box" if k == 0 else "")
 	return 1.0
 
 
@@ -944,7 +1141,7 @@ func _supermarket(f: Dictionary) -> void:
 			_part(_mat("black"), Vector3(0.6, 0.02, 1.4), p - n * 0.2, n, 0.9)
 			_col(Vector3(0.8, 0.95, 2.2), p, n)
 			var basis := Basis.looking_at(n, Vector3.UP)
-			dress.place("CashRegister_01", p + basis * Vector3(0, 0.9, 0.7), atan2(t.x, t.z), 1.0)
+			_place("CashRegister_01", p + basis * Vector3(0, 0.9, 0.7), atan2(t.x, t.z), 1.0)
 			_claim(_v2(p), 1.2)
 	# long aisles of groceries, fridges along the far side, produce stands, pallets and trolleys
 	var rows := 0
@@ -1181,9 +1378,9 @@ func _hall() -> void:
 		for j in 2:
 			var tp := cafe + u_axis * (i * 2.6 - 2.6) + v_axis * (j * 2.4 - 1.2)
 			if Dressing.has_prop("round_wooden_table_01"):
-				dress.place("round_wooden_table_01", tp, rng.randf() * TAU, 1.0, "cyl")
+				_place("round_wooden_table_01", tp, rng.randf() * TAU, 1.0, "cyl")
 				for s2 in [-1.0, 1.0]:
-					dress.place("plastic_monobloc_chair_01", tp + u_axis * 0.75 * s2, atan2(-u_axis.x * s2, -u_axis.z * s2) + rng.randf_range(-0.4, 0.4), 1.0)
+					_place("plastic_monobloc_chair_01", tp + u_axis * 0.75 * s2, atan2(-u_axis.x * s2, -u_axis.z * s2) + rng.randf_range(-0.4, 0.4), 1.0)
 			else:
 				_box(wood, Vector3(0.8, 0.75, 0.8), tp, v_axis, true)
 				for s2 in [-1.0, 1.0]:
@@ -1270,7 +1467,7 @@ func _bays() -> void:
 		var back := dc + out * (BAY_DEPTH - 0.25)
 		for s in [-1.0, 1.0]:
 			if hw >= 3.4:
-				dress.place("rollershutter_door", back + side * (hw * 0.5) * s, atan2(-out.x, -out.z), 1.0)
+				_place("rollershutter_door", back + side * (hw * 0.5) * s, atan2(-out.x, -out.z), 1.0)
 		var l := OmniLight3D.new()
 		l.light_color = Color(1.0, 0.86, 0.6)
 		l.light_energy = 1.3
@@ -1278,14 +1475,14 @@ func _bays() -> void:
 		l.position = back - out * 0.6 + Vector3(0, 4.6, 0)
 		m.static_root.add_child(l)
 		m.add_light(l, l.position + Vector3(0, 0.15, 0))
-		var cover_items := ["wooden_crate_02", "plastic_crate_03", "barrel_03", "old_military_crate", "industrial_storage_cart", "metal_tool_chest"]
+		var cover_items := ["wooden_crate_02", "plastic_crate_02", "barrel_03", "old_military_crate", "industrial_storage_cart", "metal_tool_chest"]
 		for s in [-1.0, 1.0]:
 			var p: Vector3 = dc + out * rng.randf_range(4.0, 6.5) + side * (hw - 0.8) * s
-			dress.place(cover_items[rng.randi() % cover_items.size()], p, rng.randf() * TAU, 1.0, "box")
+			_place(cover_items[rng.randi() % cover_items.size()], p, rng.randf() * TAU, 1.0, "box")
 			var p2: Vector3 = dc + out * rng.randf_range(7.5, 9.5) + side * (hw - 0.7) * s
-			dress.place(["cardboard_box_01", "trashbag", "plastic_crate_02", "cement_bag"][rng.randi() % 4], p2, rng.randf() * TAU, 1.0)
-			dress.place("trashbag", p2 + out * 0.7, rng.randf() * TAU, 0.9)
-		dress.place("hand_truck", back - out * 0.6 + side * (hw - 0.7), atan2(out.x, out.z), 1.0)
+			_place(["cardboard_box_01", "trashbag", "plastic_crate_02", "cement_bag"][rng.randi() % 4], p2, rng.randf() * TAU, 1.0)
+			_place("trashbag", p2 + out * 0.7, rng.randf() * TAU, 0.9)
+		_place("hand_truck", back - out * 0.6 + side * (hw - 0.7), atan2(out.x, out.z), 1.0)
 		dress.decal("stain", dc + out * 5.0 + side * rng.randf_range(-1.5, 1.5), 2.6, rng.randf() * TAU)
 
 
@@ -1442,13 +1639,13 @@ func _cover() -> void:
 			3:
 				dress.decal("scuff", c3, rng.randf_range(2.0, 3.5), rng.randf() * TAU)
 			4:
-				dress.place("trashbag", c3, rng.randf() * TAU, rng.randf_range(0.8, 1.1))
+				_place("trashbag", c3, rng.randf() * TAU, rng.randf_range(0.8, 1.1))
 			5:
-				dress.place("cardboard_box_01", c3, rng.randf() * TAU, rng.randf_range(0.7, 1.0))
+				_place("cardboard_box_01", c3, rng.randf() * TAU, rng.randf_range(0.7, 1.0))
 			6:
-				dress.place("WetFloorSign_01", c3, rng.randf() * TAU, 1.0)
+				_place("WetFloorSign_01", c3, rng.randf() * TAU, 1.0)
 			7:
-				dress.place("plastic_monobloc_chair_01", c3, rng.randf() * TAU, 1.0)
+				_place("plastic_monobloc_chair_01", c3, rng.randf() * TAU, 1.0)
 			8:
 				dress.decal("crack", c3, rng.randf_range(1.2, 2.4), rng.randf() * TAU)
 	if OS.is_stdout_verbose() or Net.args.has("buildlog"):
@@ -1491,7 +1688,7 @@ func _planter(p: Vector3, along: Vector3) -> void:
 			sp.height = sp.radius * 1.7
 			m._merge_add(_mat("leaf2"), sp, Transform3D(Basis(), p + Vector3(rng.randf_range(-0.35, 0.35), 2.4 + rng.randf_range(-0.2, 0.3), rng.randf_range(-0.35, 0.35))))
 	if rng.randf() < 0.5:
-		dress.place("metal_trash_can", p + basis * Vector3(0.95, 0, L * 0.5 - 0.3), rng.randf() * TAU, 1.0, "cyl")
+		_place("metal_trash_can", p + basis * Vector3(0.95, 0, L * 0.5 - 0.3), rng.randf() * TAU, 1.0, "cyl")
 
 
 func _kiosk(p: Vector3, along: Vector3) -> void:
@@ -1525,14 +1722,14 @@ func _kiosk(p: Vector3, along: Vector3) -> void:
 func _bench_pair(p: Vector3, along: Vector3) -> void:
 	var yaw := atan2(along.x, along.z)
 	var side := Vector3(-along.z, 0, along.x)
-	dress.place("painted_wooden_bench", p + side * 0.45, yaw + PI / 2, 1.0, "box")
-	dress.place("painted_wooden_bench", p - side * 0.45, yaw - PI / 2, 1.0, "box")
-	dress.place("metal_trash_can", p + along * 1.4, rng.randf() * TAU, 1.0, "cyl")
+	_place("painted_wooden_bench", p + side * 0.45, yaw + PI / 2, 1.0, "box")
+	_place("painted_wooden_bench", p - side * 0.45, yaw - PI / 2, 1.0, "box")
+	_place("metal_trash_can", p + along * 1.4, rng.randf() * TAU, 1.0, "cyl")
 	_planter_small(p - along * 1.4)
 
 
 func _planter_small(p: Vector3) -> void:
-	dress.place(["potted_plant_02", "potted_plant_04", "planter_box_03"][rng.randi() % 3], p, rng.randf() * TAU, 1.2, "box")
+	_place(["potted_plant_04", "potted_plant_04", "planter_box_03"][rng.randi() % 3], p, rng.randf() * TAU, 1.2, "box")
 
 
 func _barricade(p: Vector3, along: Vector3) -> void:
@@ -1551,17 +1748,17 @@ func _barricade(p: Vector3, along: Vector3) -> void:
 			var sb := p + basis * Vector3(-0.1, 0, 0.6 + k * 0.42 - 0.6)
 			_part(_mat("burlap"), Vector3(0.45, 0.28, 0.4), sb + basis * Vector3(0, 0, (lvl % 2) * 0.2), along, lvl * 0.27)
 	_col(Vector3(0.5, 0.55, 1.7), p + basis * Vector3(-0.1, 0, 0.6), along)
-	dress.place(["wooden_crate_02", "plastic_crate_03", "old_military_crate"][rng.randi() % 3], p + basis * Vector3(0.6, 0, 1.1), rng.randf() * TAU, 1.0, "box")
-	dress.place("plastic_monobloc_chair_01", p + basis * Vector3(-0.9, 0, -0.3), rng.randf() * TAU, 1.0)
+	_place(["wooden_crate_02", "plastic_crate_02", "old_military_crate"][rng.randi() % 3], p + basis * Vector3(0.6, 0, 1.1), rng.randf() * TAU, 1.0, "box")
+	_place("plastic_monobloc_chair_01", p + basis * Vector3(-0.9, 0, -0.3), rng.randf() * TAU, 1.0)
 
 
 func _lounge_public(p: Vector3, along: Vector3) -> void:
 	var yaw := atan2(along.x, along.z)
 	var side := Vector3(-along.z, 0, along.x)
-	dress.place("Sofa_01", p + side * 0.9, yaw + PI / 2 + PI, 1.0, "box")
-	dress.place("Sofa_01", p - side * 0.9, yaw + PI / 2, 1.0, "box")
-	dress.place("modern_coffee_table_01", p, yaw, 1.0, "box")
-	dress.place("korean_fire_extinguisher_01", p + along * 1.5, rng.randf() * TAU, 1.0)
+	_place("Sofa_01", p + side * 0.9, yaw + PI / 2 + PI, 1.0, "box")
+	_place("Sofa_01", p - side * 0.9, yaw + PI / 2, 1.0, "box")
+	_place("modern_coffee_table_01", p, yaw, 1.0, "box")
+	_place("korean_fire_extinguisher_01", p + along * 1.5, rng.randf() * TAU, 1.0)
 
 
 func _vending(p: Vector3, face: Vector3) -> void:
@@ -1589,7 +1786,7 @@ func _vending_pair(p: Vector3, along: Vector3) -> void:
 	var side := Vector3(-along.z, 0, along.x)
 	_vending(p + along * 0.5, side)
 	_vending(p - along * 0.5, side)
-	dress.place("metal_trash_can", p + along * 1.6, rng.randf() * TAU, 1.0, "cyl")
+	_place("metal_trash_can", p + along * 1.6, rng.randf() * TAU, 1.0, "cyl")
 
 
 func _lockers(p: Vector3, face: Vector3) -> void:
@@ -1616,21 +1813,21 @@ func _wall_item(p: Vector3, face: Vector3) -> void:
 	var yaw := atan2(face.x, face.z)
 	match rng.randi() % 8:
 		0:
-			dress.place("metal_trash_can", p, rng.randf() * TAU, 1.0, "cyl")
+			_place("metal_trash_can", p, rng.randf() * TAU, 1.0, "cyl")
 		1:
-			dress.place("painted_wooden_bench", p, yaw + PI / 2, 1.0, "box")
+			_place("painted_wooden_bench", p, yaw + PI / 2, 1.0, "box")
 		2:
-			dress.place("korean_fire_extinguisher_01", p + face * -0.3, yaw, 1.0)
-			dress.place("cardboard_box_01", p + Vector3(-face.z, 0, face.x) * 0.7, rng.randf() * TAU, 1.0, "box")
+			_place("korean_fire_extinguisher_01", p + face * -0.3, yaw, 1.0)
+			_place("cardboard_box_01", p + Vector3(-face.z, 0, face.x) * 0.7, rng.randf() * TAU, 1.0, "box")
 		3:
-			dress.place("industrial_storage_cart", p, yaw + PI / 2, 1.0, "box")
+			_place("industrial_storage_cart", p, yaw + PI / 2, 1.0, "box")
 		4:
 			_planter_small(p)
 		5:
 			_vending(p, face)
 		6:
-			dress.place("plastic_crate_03", p, rng.randf() * TAU, 1.0, "box")
-			dress.place("plastic_crate_03", p + Vector3(0, 0.33, 0), rng.randf() * TAU, 1.0)
+			_place("plastic_crate_02", p, rng.randf() * TAU, 1.0, "box")
+			_place("plastic_crate_02", p + Vector3(0, 0.33, 0), rng.randf() * TAU, 1.0)
 		7:
-			dress.place("hand_truck", p, yaw, 1.0)
-			dress.place("cardboard_box_01", p + face * 0.4, rng.randf() * TAU, 1.0, "box")
+			_place("hand_truck", p, yaw, 1.0)
+			_place("cardboard_box_01", p + face * 0.4, rng.randf() * TAU, 1.0, "box")

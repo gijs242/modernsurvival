@@ -111,7 +111,11 @@ func _apply_window_settings() -> void:
 	vp.use_taa = q == 3
 	vp.screen_space_aa = Viewport.SCREEN_SPACE_AA_FXAA if q <= 1 else Viewport.SCREEN_SPACE_AA_DISABLED
 	vp.mesh_lod_threshold = 4.0 if q < 0 else 1.0
-	RenderingServer.directional_shadow_atlas_set_size(8192 if q >= 2 else (4096 if q >= 0 else 2048), true)
+	RenderingServer.directional_shadow_atlas_set_size(8192 if q >= 3 else (4096 if q >= 1 else 2048), true)
+	# soft shadow filtering is paid per pixel per light: top quality only on Ultra
+	var soft := RenderingServer.SHADOW_QUALITY_SOFT_HIGH if q >= 3 else (RenderingServer.SHADOW_QUALITY_SOFT_LOW if q >= 1 else RenderingServer.SHADOW_QUALITY_HARD)
+	RenderingServer.directional_soft_shadow_filter_set_quality(soft)
+	RenderingServer.positional_soft_shadow_filter_set_quality(soft)
 
 
 # ======================================================================= UI building
