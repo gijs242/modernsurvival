@@ -236,8 +236,8 @@ void sky() {
 	env.ssil_intensity = 0.8
 	env.ssr_enabled = quality >= 3
 	env.sdfgi_enabled = quality >= 2
-	env.sdfgi_use_occlusion = true
-	env.sdfgi_cascades = 4
+	env.sdfgi_use_occlusion = false
+	env.sdfgi_cascades = 3
 	env.sdfgi_min_cell_size = 0.2
 	env.sdfgi_energy = 0.9
 	env.glow_enabled = quality >= 1
@@ -252,7 +252,7 @@ void sky() {
 	env.fog_sky_affect = 0.0
 	env.fog_sun_scatter = 0.15
 	env.fog_aerial_perspective = 0.25
-	env.volumetric_fog_enabled = quality >= 2
+	env.volumetric_fog_enabled = quality >= 3
 	env.volumetric_fog_density = 0.0025
 	env.volumetric_fog_albedo = Color(0.85, 0.82, 0.78)
 	env.volumetric_fog_anisotropy = 0.6
@@ -279,7 +279,7 @@ void sky() {
 	sun.shadow_normal_bias = 1.2
 	sun.shadow_blur = 1.2
 	sun.directional_shadow_mode = DirectionalLight3D.SHADOW_PARALLEL_4_SPLITS
-	sun.directional_shadow_max_distance = 140.0 if quality >= 2 else (90.0 if quality >= 0 else 55.0)
+	sun.directional_shadow_max_distance = [55.0, 60.0, 70.0, 90.0, 130.0][clampi(quality + 1, 0, 4)]
 	if quality < 0:
 		sun.directional_shadow_mode = DirectionalLight3D.SHADOW_PARALLEL_2_SPLITS
 		env.fog_aerial_perspective = 0.0
@@ -749,6 +749,22 @@ func _cheap_lights(n: Node) -> void:
 		(n as Light3D).shadow_enabled = false
 
 
+## Switch the graphics preset while playing (used by the automatic FPS guard).
+func apply_quality(q: int) -> void:
+	quality = q
+	env.ssao_enabled = q >= 1
+	env.ssil_enabled = q >= 2
+	env.ssr_enabled = q >= 3
+	env.sdfgi_enabled = q >= 2
+	env.glow_enabled = q >= 1
+	env.volumetric_fog_enabled = q >= 3
+	sun.directional_shadow_max_distance = [55.0, 60.0, 70.0, 90.0, 130.0][clampi(q + 1, 0, 4)]
+	sun.directional_shadow_mode = DirectionalLight3D.SHADOW_PARALLEL_4_SPLITS if q >= 0 else DirectionalLight3D.SHADOW_PARALLEL_2_SPLITS
+	if q < 0:
+		for l in find_children("*", "OmniLight3D", true, false):
+			(l as Light3D).shadow_enabled = false
+
+
 # ---------------------------------------------------------------- time of day
 ## Afternoon at wave 1, dusk by wave 10, deeper dusk after; night waves are dark; smoke waves fog up.
 func update_daylight(wave: int, special: String, state: String, dt: float) -> void:
@@ -761,12 +777,11 @@ func update_daylight(wave: int, special: String, state: String, dt: float) -> vo
 		smoke_k = smoke_t
 	tod = move_toward(tod, target, dt * (0.25 if target >= 1.9 or tod > 1.4 else 0.03))
 	smoke_k = move_toward(smoke_k, smoke_t, dt * 0.15)
+	# re-lighting the sky is expensive on the GPU: only when it visibly changed, at most every 2 s
 	_tod_t -= dt
-	if _tod_t > 0.0 and abs(_applied.x - tod) < 0.01 and abs(_applied.y - smoke_k) < 0.01:
+	if _tod_t > 0.0 or (abs(_applied.x - tod) < 0.04 and abs(_applied.y - smoke_k) < 0.04):
 		return
-	if _tod_t > 0.0:
-		return
-	_tod_t = 0.4
+	_tod_t = 2.0
 	_applied = Vector2(tod, smoke_k)
 	_apply_daylight()
 
@@ -805,6 +820,11 @@ func _apply_daylight() -> void:
 ## Register a light with a small shootable fixture above it. `street` lamps follow the time of day.
 func add_light(l: Light3D, fixture: Vector3, energy := -1.0, street := false) -> void:
 	var id := lights.size()
+	# dozens of overlapping shop lights were one of the biggest GPU costs: fade them out with distance
+	l.distance_fade_enabled = true
+	l.distance_fade_begin = 28.0
+	l.distance_fade_length = 8.0
+	l.shadow_enabled = false
 	var mat := Mat.emissive(l.light_color, 2.5)
 	var mi := MeshInstance3D.new()
 	var bm := BoxMesh.new()

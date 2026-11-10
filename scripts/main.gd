@@ -57,7 +57,7 @@ func _ready() -> void:
 	if Net.args.has("join"):
 		name_edit.text = Net.player_name
 		_join(str(Net.args.join), Net.port)
-	elif Net.args.has("autotest") or Net.args.has("shots") or Net.args.has("selftest"):
+	elif Net.args.has("autotest") or Net.args.has("shots") or Net.args.has("selftest") or Net.args.has("perfprobe"):
 		_start_sp()
 
 
@@ -85,7 +85,7 @@ func _register_inputs() -> void:
 
 
 func _apply_window_settings() -> void:
-	var q := int(Settings.get_val("quality", 2))       # -1 Performance, 0 Low, 1 Medium, 2 High, 3 Ultra
+	var q := int(Net.args.get("quality", Settings.get_val("quality", 2)))       # -1 Performance, 0 Low, 1 Medium, 2 High, 3 Ultra
 	var vp := get_viewport()
 	if q < 0:
 		vp.scaling_3d_mode = Viewport.SCALING_3D_MODE_FSR       # FSR 1: far cheaper than FSR 2
@@ -616,7 +616,118 @@ func _update_browser(dt: float) -> void:
 var _pf_sum := 0.0
 var _pf_n := 0
 
+# ======================================================================= render cost probe (dev tool)
+## --perfprobe: stand in the mall hall and measure the GPU / CPU render time with each costly feature off in turn.
+var _pp_t := 0.0
+var _pp_i := -1
+var _pp_acc := [0.0, 0.0, 0]
+var _pp_base := {}
+const PP_STEPS := ["baseline", "sdfgi", "volumetric_fog", "ssil", "ssao", "glow", "fog", "sun_shadows", "omni_lights", "backdrop", "dressing", "all_off"]
+
+func _perfprobe(dt: float) -> void:
+	if game == null or game.map == null or game.map.env == null:
+		return
+	var lp: Player = game.player_nodes.get(game.local_id)
+	if lp == null:
+		return
+	var p: Dictionary = game.P.get(game.local_id, {})
+	p.hp = 100.0
+	game.timer = 99.0
+	lp.global_position = game.map.player_spawns[0]
+	lp.yaw = -float(game.map.get_meta("theta", 0.0)) + 0.4
+	lp.pitch = 0.05
+	var vp := get_viewport()
+	RenderingServer.viewport_set_measure_render_time(vp.get_viewport_rid(), true)
+	_pp_t += dt
+	if _pp_i < 0:
+		if _pp_t > 6.0:
+			_pp_i = 0
+			_pp_t = 0.0
+		return
+	if _pp_t > 1.0:      # settle, then measure for 2 s
+		_pp_acc[0] += RenderingServer.viewport_get_measured_render_time_gpu(vp.get_viewport_rid())
+		_pp_acc[1] += RenderingServer.viewport_get_measured_render_time_cpu(vp.get_viewport_rid()) + RenderingServer.get_frame_setup_time_cpu()
+		_pp_acc[2] += 1
+	if _pp_t > 3.0:
+		var n: int = max(1, _pp_acc[2])
+		print("[perf] %-15s gpu %.1f ms  cpu %.1f ms  draw calls %d" % [PP_STEPS[_pp_i], _pp_acc[0] / n, _pp_acc[1] / n,
+			RenderingServer.get_rendering_info(RenderingServer.RENDERING_INFO_TOTAL_DRAW_CALLS_IN_FRAME)])
+		_pp_acc = [0.0, 0.0, 0]
+		_pp_t = 0.0
+		_pp_i += 1
+		if _pp_i >= PP_STEPS.size():
+			get_tree().quit()
+			return
+		_pp_apply(PP_STEPS[_pp_i])
+
+
+func _pp_apply(step: String) -> void:
+	var env: Environment = game.map.env
+	match step:
+		"sdfgi": env.sdfgi_enabled = false
+		"volumetric_fog": env.volumetric_fog_enabled = false
+		"ssil": env.ssil_enabled = false
+		"ssao": env.ssao_enabled = false
+		"glow": env.glow_enabled = false
+		"fog": env.fog_enabled = false
+		"sun_shadows": game.map.sun.shadow_enabled = false
+		"omni_lights":
+			for l in game.map.find_children("*", "OmniLight3D", true, false):
+				(l as OmniLight3D).visible = false
+		"backdrop":
+			var b := game.map.find_child("LeekBackdrop", true, false)
+			if b: b.visible = false
+		"dressing":
+			for n in game.map.static_root.get_children():
+				if n is MeshInstance3D or n is MultiMeshInstance3D:
+					pass
+			for n in game.map.find_children("*", "MultiMeshInstance3D", true, false):
+				(n as Node3D).visible = false
+		"all_off":
+			for n in game.map.static_root.find_children("*", "GeometryInstance3D", true, false):
+				(n as Node3D).visible = false
+
+
+## FPS guard: if a game runs below ~25 FPS for 4 s, step the graphics preset down (live) and say so.
+var _fg_t := 0.0
+var _fg_frames := 0
+var _fg_cool := 8.0
+
+func _fps_guard(dt: float) -> void:
+	if game == null or hud == null or Net.is_dedicated() or get_tree().paused:
+		return
+	if Net.args.has("perfprobe") or Net.args.has("shots") or Net.args.has("autotest") or Net.args.has("selftest"):
+		return
+	_fg_cool -= dt
+	if _fg_cool > 0.0:                 # let the level settle (shader compiles, first spawns)
+		_fg_t = 0.0
+		_fg_frames = 0
+		return
+	_fg_t += dt
+	_fg_frames += 1
+	if _fg_t < 4.0:
+		return
+	var fps := _fg_frames / _fg_t
+	_fg_t = 0.0
+	_fg_frames = 0
+	var q := int(Settings.get_val("quality", 2))
+	if fps < 25.0 and q > -1:
+		q -= 1
+		Settings.set_val("quality", q)
+		_apply_window_settings()
+		game.map.apply_quality(q)
+		game.quality = q
+		if quality_opt:
+			quality_opt.selected = q + 1
+		hud.feed("Low frame rate (%d FPS): graphics lowered to %s" % [roundi(fps), ["Performance", "Low", "Medium", "High", "Ultra"][q + 1]])
+		_fg_cool = 6.0
+
+
+var _pf_sum_dummy := 0
 func _process(dt: float) -> void:
+	_fps_guard(dt)
+	if Net.args.has("perfprobe"):
+		_perfprobe(dt)
 	if autotest_t > 0.0:
 		_pf_sum += Performance.get_monitor(Performance.TIME_PHYSICS_PROCESS)
 		_pf_n += 1
@@ -830,6 +941,27 @@ func _autotest(dt: float) -> void:
 	if g % 1500 == 400: game.send({"t": "strike", "k": "strike", "pos": Vector3(0, 0, -30)})
 	if g % 1800 == 500: game.send({"t": "drone"})
 	if g % 2400 == 600: game.send({"t": "strike", "k": "carpet"})
+	# --navcheck (dev): route length from every spawn to the hall, and through every mall door
+	if f == 200 and Net.args.has("navcheck"):
+		var nav := game.get_world_3d().navigation_map
+		var goal: Vector3 = game.map.player_spawns[0]
+		for sp in game.map.spawns:
+			var path := NavigationServer3D.map_get_path(nav, sp, goal, true)
+			var L := 0.0
+			for i in range(1, path.size()):
+				L += path[i].distance_to(path[i - 1])
+			print("[nav] spawn %s straight %.0f m, route %.0f m, ends %.1f m from goal" % [sp, sp.distance_to(goal), L, path[path.size() - 1].distance_to(goal) if path.size() else -1.0])
+		for dd in game.map.get_meta("doors", []):
+			var ep: Vector3 = dd[0]
+			var out: Vector3 = dd[1]
+			var path := NavigationServer3D.map_get_path(nav, ep + out * 4.0, ep - out * 4.0, true)
+			var L := 0.0
+			for i in range(1, path.size()):
+				L += path[i].distance_to(path[i - 1])
+			var inside := NavigationServer3D.map_get_path(nav, ep - out * 4.0, goal, true)
+			var end_d: float = inside[inside.size() - 1].distance_to(goal) if inside.size() else -1.0
+			print("[nav] door %s width %.1f: through it %.0f m (8 straight); inside->hall ends %.1f m from goal; outside nav %s inside nav %s" % [ep, dd[2], L, end_d,
+				NavigationServer3D.map_get_closest_point(nav, ep + out * 4.0).distance_to(ep + out * 4.0) < 1.0, NavigationServer3D.map_get_closest_point(nav, ep - out * 4.0).distance_to(ep - out * 4.0) < 1.0])
 	if f % 300 == 0 and game.is_server:
 		var mix := {}
 		for e in game.enemies.values():

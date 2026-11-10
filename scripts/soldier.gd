@@ -384,7 +384,7 @@ func _build_shield(parent: Node3D) -> void:
 	_rb(shield, steel, Vector3(0.58, 1.0, 0.05), Vector3.ZERO, 0.04)
 	_rb(shield, Mat.solid(Color(0.1, 0.16, 0.2, 1.0), 0.05, 0.9), Vector3(0.26, 0.09, 0.02), Vector3(0, 0.36, -0.03), 0.01)
 	var lbl := Label3D.new()
-	lbl.text = "POLITIE"
+	lbl.text = "POLICE"
 	lbl.font_size = 48
 	lbl.pixel_size = 0.004
 	lbl.modulate = Color(0.85, 0.85, 0.8)

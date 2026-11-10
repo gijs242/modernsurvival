@@ -215,7 +215,7 @@ func _physics_process(dt: float) -> void:
 		return
 	var pos := global_position
 	var tpos: Vector3 = tgt.pos
-	_far = td > 45.0
+	_far = td > 25.0
 	var eye := pos + Vector3(0, 1.45 * s, 0)
 	var teye := tpos + Vector3(0, 0.8 if tgt.cr else 1.35, 0)
 	var space := get_world_3d().direct_space_state
@@ -270,6 +270,8 @@ func _physics_process(dt: float) -> void:
 			elif engage and mode == ADVANCE:
 				speed *= 0.6
 		_maybe_grenade(tgt, td, eye)
+	if _far and not los and mode == ADVANCE and act_t <= 0.0 and not def.get("melee", false):
+		speed *= 1.45                                      # jog in until contact
 	if hp < max_hp * 0.4 and not def.get("dog", false):
 		speed *= 0.75                                      # badly wounded: limping
 	if act_t > 0.0:

@@ -7,7 +7,6 @@ extends RefCounted
 
 const DATA := "res://assets/maps/leek_backdrop.json"
 const CHUNK := 500.0      # big chunks: ~50 draw calls for the whole town
-const SHADOW_DIST := 320.0
 
 const WALLS := [Color(0.46, 0.27, 0.2), Color(0.52, 0.33, 0.24), Color(0.4, 0.24, 0.19), Color(0.62, 0.55, 0.47), Color(0.75, 0.72, 0.66), Color(0.35, 0.3, 0.28)]
 const ROOF_SLANT := [Color(0.22, 0.2, 0.2), Color(0.38, 0.2, 0.15), Color(0.28, 0.27, 0.27)]
@@ -57,9 +56,7 @@ func build(parent: Node3D, quality := 2) -> void:
 			var mi := MeshInstance3D.new()
 			mi.mesh = st.commit()
 			mi.material_override = mat
-			var centre := Vector2((key.x + 0.5) * CHUNK, (key.y + 0.5) * CHUNK)
-			var near := centre.distance_to(detail.get_center()) < SHADOW_DIST and quality >= 0
-			mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON if (near and set == chunks) else GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+			mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF       # scenery: never in the shadow passes
 			mi.gi_mode = GeometryInstance3D.GI_MODE_DISABLED
 			root.add_child(mi)
 

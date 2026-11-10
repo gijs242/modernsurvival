@@ -6,9 +6,10 @@ extends RefCounted
 ## glass-roofed main hall with a white space-frame like the real one.
 
 const DATA := "res://assets/maps/liekeblom.json"
-const SIGNS := {"supermarket": "SUPERMARKT", "books": "BOEKHANDEL", "photo": "FOTO", "clothes": "MODE", "mobile_phone": "TELECOM",
-	"jewelry": "JUWELIER", "fast_food": "PIZZA", "retail": "WINKEL", "vacant": "TE HUUR", "florist": "BLOEMEN", "chemist": "DROGISTERIJ",
-	"hairdresser": "KAPPER", "bank": "BANK", "optician": "OPTICIEN", "shoes": "SCHOENEN"}
+const PLAY_MARGIN := 14.0       # metres of street around the mall that are playable
+const SIGNS := {"supermarket": "SUPERMARKET", "books": "BOOKSHOP", "photo": "PHOTO", "clothes": "FASHION", "mobile_phone": "PHONES",
+	"jewelry": "JEWELLER", "fast_food": "PIZZA", "retail": "SHOP", "vacant": "FOR RENT", "florist": "FLOWERS", "chemist": "PHARMACY",
+	"hairdresser": "HAIRDRESSER", "bank": "BANK", "optician": "OPTICIAN", "shoes": "SHOES"}
 
 var m: GameMap
 var d: Dictionary
@@ -26,8 +27,11 @@ func build(map: GameMap) -> void:
 	theta = float(d.mall.theta)
 	m.set_meta("theta", theta)
 	m.set_meta("entrances", d.mall.entrances)
-	var b: Array = d.bounds
-	m.bounds = Rect2(b[0], b[1], b[2] - b[0], b[3] - b[1])
+	# playable area: the mall plus a strip of street around it (the rest of the data is scenery)
+	var fb := Rect2(Vector2(d.mall.footprint[0][0], d.mall.footprint[0][1]), Vector2.ZERO)
+	for p in d.mall.footprint:
+		fb = fb.expand(Vector2(p[0], p[1]))
+	m.bounds = fb.grow(PLAY_MARGIN)
 	body = StaticBody3D.new()
 	body.collision_layer = Defs.L_WORLD
 	body.collision_mask = 0
@@ -256,6 +260,16 @@ func _flush_tris() -> void:
 
 
 # ------------------------------------------------------------------ mall
+var door_list: Array = []      # [centre, outward normal, width] of every door cut into the mall shell
+var _fp2: PackedVector2Array
+
+func _footprint2() -> PackedVector2Array:
+	if _fp2.is_empty():
+		for p in d.mall.footprint:
+			_fp2.append(Vector2(p[0], p[1]))
+	return _fp2
+
+
 func _mall_shell() -> void:
 	var outer := Mat.world("bricks", Color(0.9, 0.85, 0.8), 0.5)
 	var gf: float = d.ground_floor_h
@@ -271,6 +285,11 @@ func _mall_shell() -> void:
 		for c in cuts:
 			var d0: float = max(t, float(c) - 1.6)
 			var d1: float = min(L, float(c) + 1.6)
+			var dc := a + dir * ((d0 + d1) * 0.5)
+			var dn := Vector3(-dir.z, 0, dir.x)
+			if Geometry2D.is_point_in_polygon(Vector2(dc.x + dn.x, dc.z + dn.z), _footprint2()):
+				dn = -dn
+			door_list.append([dc, dn, d1 - d0])
 			_wall(outer, a + dir * t, a + dir * d0, 0.0, h, 0.35)
 			_wall(outer, a + dir * d0, a + dir * d1, 2.7, h, 0.35)        # lintel over the doors
 			# glass entrance doors (open)
@@ -280,9 +299,8 @@ func _mall_shell() -> void:
 		_wall(outer, a + dir * t, b, 0.0, h, 0.35)
 		if h < gf - 0.05:
 			pass
-	var poly := PackedVector2Array()
-	for p in d.mall.footprint:
-		poly.append(Vector2(p[0], p[1]))
+	m.set_meta("doors", door_list)
+	var poly := _footprint2()
 	m.minimap_polys.append([poly, Color(0.42, 0.42, 0.4, 0.75)])
 	m.indoor_polys.append(poly)
 	# floor of the whole mall
@@ -389,7 +407,7 @@ func _mall_interior() -> void:
 			_wall(frame, dp - dir * 1.35, dp - dir * 1.25, 0.0, 2.9, 0.14)
 			_wall(frame, dp + dir * 1.25, dp + dir * 1.35, 0.0, 2.9, 0.14)
 			var shop: Dictionary = shop_by_id.get(int(w.shop), {})
-			var text: String = "ARMORY" if int(w.shop) == armory_shop else SIGNS.get(shop.get("kind", "retail"), "WINKEL")
+			var text: String = "ARMORY" if int(w.shop) == armory_shop else SIGNS.get(shop.get("kind", "retail"), "SHOP")
 			var lbl := Label3D.new()
 			lbl.text = text
 			lbl.font_size = 110
@@ -433,7 +451,7 @@ func _shop(s: Dictionary, armory: bool) -> void:
 	var light := OmniLight3D.new()
 	light.light_color = Color(1.0, 0.96, 0.9)
 	light.light_energy = 1.4
-	light.omni_range = clamp(sqrt(float(s.area_game)) * 0.9, 6.0, 20.0)
+	light.omni_range = clamp(sqrt(float(s.area_game)) * 0.75, 5.0, 12.0)
 	light.position = c + Vector3(0, 2.7, 0)
 	m.static_root.add_child(light)
 	m.add_light(light, light.position + Vector3(0, 0.17, 0))
@@ -471,7 +489,7 @@ func _shop(s: Dictionary, armory: bool) -> void:
 			_box(Mat.solid(Color(0.25, 0.25, 0.27), 0.4, 0.3), Vector3(0.8, 0.9, 2.2), p, inward, true)
 		var l2 := OmniLight3D.new()
 		l2.light_energy = 1.4
-		l2.omni_range = 20.0
+		l2.omni_range = 12.0
 		l2.position = door + inward * 14.0 + Vector3(0, 2.7, 0)
 		m.static_root.add_child(l2)
 		m.add_light(l2, l2.position + Vector3(0, 0.17, 0))
@@ -797,17 +815,41 @@ func _roof_access() -> void:
 func _boundary() -> void:
 	var r := m.bounds
 	var corners := [Vector3(r.position.x, 0, r.position.y), Vector3(r.end.x, 0, r.position.y), Vector3(r.end.x, 0, r.end.y), Vector3(r.position.x, 0, r.end.y)]
+	var concrete := Mat.pbr("concrete", Color(0.78, 0.77, 0.74), 0.9)
+	var stripe := Mat.solid(Color(0.85, 0.2, 0.12), 0.7)
 	for k in 4:
 		var a: Vector3 = corners[k]
 		var b: Vector3 = corners[(k + 1) % 4]
 		var dir := b - a
 		_box_col(Vector3(0.5, 30, dir.length()), Transform3D(Basis.looking_at(dir.normalized(), Vector3.UP), (a + b) * 0.5 + Vector3(0, 15, 0)))
+		# visible edge of the play area: a line of concrete road barriers
+		var n := int(dir.length() / 2.1)
+		for i in n:
+			var c := a.lerp(b, (i + 0.5) / n)
+			var basis := Basis.looking_at(dir.normalized(), Vector3.UP)
+			var lo := BoxMesh.new()
+			lo.size = Vector3(0.62, 0.35, 1.95)
+			m._merge_add(concrete, lo, Transform3D(basis, c + Vector3(0, 0.175, 0)))
+			var hi := BoxMesh.new()
+			hi.size = Vector3(0.28, 0.6, 1.95)
+			m._merge_add(concrete, hi, Transform3D(basis, c + Vector3(0, 0.65, 0)))
+			if i % 2 == 0:
+				var st := BoxMesh.new()
+				st.size = Vector3(0.3, 0.12, 1.96)
+				m._merge_add(stripe, st, Transform3D(basis, c + Vector3(0, 0.82, 0)))
 
 
 func _gameplay_points() -> void:
-	for p in d.spawns:
-		m.spawns.append(_v(p) + Vector3(0, 0.05, 0))
+	# enemies come in from the street just outside each mall entrance, and along the sides of the play area
 	var hc := _v(d.mall.hall_center)
+	var inner := m.bounds.grow(-3.0)
+	for dd in m.get_meta("doors", []):
+		var ep: Vector3 = dd[0]
+		var out: Vector3 = dd[1]
+		var side := Vector3(-out.z, 0, out.x)
+		for off in [Vector3.ZERO, side * 7.0, -side * 7.0]:
+			var sp: Vector3 = ep + out * 8.0 + off
+			m.spawns.append(Vector3(clampf(sp.x, inner.position.x, inner.end.x), 0.05, clampf(sp.z, inner.position.y, inner.end.y)))
 	var rot := Basis(Vector3.UP, -theta)
 	for off in [Vector3(0, 0, 5), Vector3(2.5, 0, 5.5), Vector3(-2.5, 0, 5.5), Vector3(0, 0, 7.5)]:
 		m.player_spawns.append(hc + rot * off + Vector3(0, 0.1, 0))

@@ -15,6 +15,11 @@ var mesh_cache := {}           # prop name -> Array[[Mesh, Transform3D, Material
 var decal_tex := {}
 
 
+## Grass / weeds are scanned plants (heavy, alpha-tested): fewer of them on the lower graphics presets.
+func _density() -> float:
+	return [0.15, 0.3, 0.55, 0.8, 1.0][clampi(m.quality + 1, 0, 4)]
+
+
 func run(map: GameMap, data: Dictionary, static_body: StaticBody3D) -> void:
 	m = map
 	d = data
@@ -98,7 +103,16 @@ func _meshes_of(name: String) -> Array:
 	return out
 
 
+func _near_door(p: Vector2) -> bool:
+	for dd in m.get_meta("doors", []):                # keep mall doorways clear (enemies need ~1 m to pass)
+		if Vector2(p.x - dd[0].x, p.y - dd[0].z).length() < 3.5:
+			return true
+	return false
+
+
 func place(name: String, pos: Vector3, yaw := 0.0, scale := 1.0, collider := "") -> void:
+	if (collider != "" or name.begins_with("tree:")) and _near_door(Vector2(pos.x, pos.z)):
+		return
 	if not batches.has(name):
 		batches[name] = []
 	batches[name].append(Transform3D(Basis(Vector3.UP, yaw).scaled(Vector3.ONE * scale), pos))
@@ -124,9 +138,14 @@ func _flush() -> void:
 			var mmi := MultiMeshInstance3D.new()
 			mmi.multimesh = mm
 			var small: bool = name.begins_with("grass") or name.begins_with("weed") or name.begins_with("fern") or name.begins_with("nettle")
-			mmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF if small else GeometryInstance3D.SHADOW_CASTING_SETTING_ON
+			# shadows from the scanned props were the biggest remaining GPU cost: below Ultra only big things
+			# (trees on High+, lamps, bins, barriers) cast them; small clutter and plants never do
+			var big := mesh.get_aabb().size.y * (xfs[0] as Transform3D).basis.get_scale().y > 1.2
+			mmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON if (not small and (big or m.quality >= 3)) else GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+			if name.begins_with("tree:") and m.quality < 2:
+				mmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF   # scanned trees are heavy in the shadow passes
 			if name.begins_with("tree:") or name.begins_with("grass") or name.begins_with("weed") or name.begins_with("fern") or name.begins_with("nettle"):
-				mmi.visibility_range_end = 140.0 if name.begins_with("tree:") else 45.0
+				mmi.visibility_range_end = (120.0 if m.quality >= 2 else 80.0) if name.begins_with("tree:") else (30.0 if m.quality >= 2 else 18.0)
 				mmi.visibility_range_end_margin = 10.0
 				mmi.visibility_range_fade_mode = GeometryInstance3D.VISIBILITY_RANGE_FADE_SELF
 			m.static_root.add_child(mmi)
@@ -259,7 +278,8 @@ func _street_trees() -> void:
 
 func _tree_pit(p: Vector3) -> void:
 	for k in 3:
-		place(["grass_medium_01", "weed_plant_02", "grass_medium_02"][k], p + Vector3(rng.randf_range(-0.6, 0.6), 0, rng.randf_range(-0.6, 0.6)), rng.randf() * TAU, rng.randf_range(0.8, 1.2))
+		if rng.randf() < _density():
+			place(["grass_medium_01", "weed_plant_02", "grass_medium_02"][k], p + Vector3(rng.randf_range(-0.6, 0.6), 0, rng.randf_range(-0.6, 0.6)), rng.randf() * TAU, rng.randf_range(0.8, 1.2))
 	_leaf_decal_at(p)
 
 
@@ -280,14 +300,14 @@ func _green_areas() -> void:
 			r = r.expand(p)
 		var area := r.get_area()
 		var n_trees := int(area / (90.0 if a.kind == "forest" else 260.0))
-		var n_small := int(area / 2.2)
+		var n_small := int(area / 2.2 * _density())
 		for i in min(n_trees, 60):
 			var p := Vector2(rng.randf_range(r.position.x, r.end.x), rng.randf_range(r.position.y, r.end.y))
 			if Geometry2D.is_point_in_polygon(p, poly) and _free_spot(p, 2.5, 1.0):
 				var tp := Vector3(p.x, 0, p.y)
 				place(["tree:island_tree_02", "tree:tree_small_02"][rng.randi() % 2], tp, rng.randf() * TAU, rng.randf_range(1.2, 1.9), "cyl")
 				_leaf_spots.append(tp)
-		for i in min(n_small, 900):
+		for i in min(n_small, int(900 * _density())):
 			var p := Vector2(rng.randf_range(r.position.x, r.end.x), rng.randf_range(r.position.y, r.end.y))
 			if Geometry2D.is_point_in_polygon(p, poly) and _free_spot(p, 0.3, 0.2):
 				var kind: String = ["grass_medium_01", "grass_medium_02", "grass_medium_01", "weed_plant_02", "fern_02", "nettle_plant", "shrub_02", "shrub_03", "shrub_04"][rng.randi() % 9]
@@ -312,7 +332,8 @@ func _wall_weeds() -> void:
 				for sgn in [1.0, -1.0]:
 					var p: Vector2 = mid + out * 0.25 * sgn
 					if _in_bounds(p) and not _in_building(p) and not _on_road(p, 0.0):
-						place(["grass_medium_02", "weed_plant_02", "grass_medium_01"][rng.randi() % 3], Vector3(p.x, 0, p.y), rng.randf() * TAU, rng.randf_range(0.5, 0.9))
+						if rng.randf() < _density():
+							place(["grass_medium_02", "weed_plant_02", "grass_medium_01"][rng.randi() % 3], Vector3(p.x, 0, p.y), rng.randf() * TAU, rng.randf_range(0.5, 0.9))
 						break
 
 
@@ -346,7 +367,8 @@ func _street_furniture() -> void:
 				for k in range(-2, 3):
 					var bp := p + dir * 1.2 + side * k * 1.1
 					if _in_bounds(bp) and not _in_building(bp, 0.3) and not _on_road(bp, 0.1):
-						bollard_xf.append(Transform3D(Basis(), Vector3(bp.x, 0, bp.y)))
+						if not _near_door(bp):
+							bollard_xf.append(Transform3D(Basis(), Vector3(bp.x, 0, bp.y)))
 	if not bollard_xf.is_empty():
 		var mm := MultiMesh.new()
 		mm.transform_format = MultiMesh.TRANSFORM_3D

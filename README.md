@@ -9,9 +9,10 @@ Weapons, Gunsmith (attachments), Equipment and Air Support. New gear unlocks eve
 **Maps**
 - **De Liekeblom (Leek)** — real building footprint, corridors, entrances and shop units (BAG + OpenStreetMap), real 3D shapes
   of every surrounding building (3D BAG), the glass-roofed main hall with its white space frame, café terrace and flower stall,
-  streets, parking, the canal, trees, street furniture and clutter. Beyond the playable area the rest of Leek
+  and the street around it. The playable area is the mall plus a 14 m strip of street (marked by concrete road
+  barriers); enemies come in through the four entrances. Beyond it the surrounding streets and the rest of Leek
   (~4,500 buildings with measured roof heights, every street, the canals, parks, woods and fields in a 2.5 km square)
-  is shown as low-detail scenery — accurate in layout and height, but cheap to render and not playable.
+  are scenery — accurate in layout and height, but cheap to render and not playable.
 - **Industrial Yard** — the original walled yard.
 
 - **Singleplayer**, **co-op (up to 4)** as a listen server, or a **dedicated headless server** on your own hardware.
@@ -50,7 +51,8 @@ Weapons, Gunsmith (attachments), Equipment and Air Support. New gear unlocks eve
 4. Press **F5** (or the ▶ button top-right) to play.
 5. In the menu choose **Singleplayer**, or **Host Co-op** / **Join** for multiplayer. Pick a graphics preset that suits
    your PC (*Ultra* adds TAA + screen-space reflections, *Low* uses FSR upscaling for weaker GPUs, *Performance*
-   is for laptops / integrated graphics: 60% render scale with FSR 1, short shadows, no light shadows).
+   is for laptops / integrated graphics: 60% render scale with FSR 1, short shadows, no light shadows). If the game
+   runs below ~25 FPS for a few seconds it lowers the preset by itself and tells you in the feed.
 
 **Controls**
 

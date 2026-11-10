@@ -201,7 +201,12 @@ func _spawn_enemy(type: String, at = null) -> void:
 	e.name = "E%d" % e.id
 	enemies[e.id] = e
 	enemies_root.add_child(e)
-	e.global_position = best + Vector3(randf_range(-1.5, 1.5), 0.05, randf_range(-1.5, 1.5))
+	var at_pos := best + Vector3(randf_range(-1.5, 1.5), 0.05, randf_range(-1.5, 1.5))
+	if map.nav_region:                     # make sure we never spawn inside a building
+		var cp := NavigationServer3D.map_get_closest_point(get_world_3d().navigation_map, at_pos)
+		if cp != Vector3.ZERO and absf(cp.y - at_pos.y) < 1.0:   # ground level only (not onto a roof)
+			at_pos = Vector3(cp.x, at_pos.y, cp.z)
+	e.global_position = at_pos
 
 
 func _game_over() -> void:
