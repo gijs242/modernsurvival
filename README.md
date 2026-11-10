@@ -9,7 +9,9 @@ Weapons, Gunsmith (attachments), Equipment and Air Support. New gear unlocks eve
 **Maps**
 - **De Liekeblom (Leek)** — real building footprint, corridors, entrances and shop units (BAG + OpenStreetMap), real 3D shapes
   of every surrounding building (3D BAG), the glass-roofed main hall with its white space frame, café terrace and flower stall,
-  streets, parking, the canal, trees, street furniture and clutter.
+  streets, parking, the canal, trees, street furniture and clutter. Beyond the playable area the rest of Leek
+  (~4,500 buildings with measured roof heights, every street, the canals, parks, woods and fields in a 2.5 km square)
+  is shown as low-detail scenery — accurate in layout and height, but cheap to render and not playable.
 - **Industrial Yard** — the original walled yard.
 
 - **Singleplayer**, **co-op (up to 4)** as a listen server, or a **dedicated headless server** on your own hardware.
@@ -260,7 +262,7 @@ Plays two minutes of scripted waves (buying, shooting, every support item) and r
   - AK-47, M1911, L85A1, G3A3, Mosin-Nagant, Dragunov — "Various Small Arms" by **Julius**, [OpenGameArt](https://opengameart.org/content/various-small-arms-assault-rifles-sniper-pistol), public domain
   - SCAR-H, M9 — "FPS Weapons" by **biglew**, CC-BY-SA 3.0
   - MG-M-250 — [OpenGameArt](https://opengameart.org/content/mg-m-250-light-machine-gun), CC-BY-SA 4.0
-- Map data: BAG (Kadaster) via PDOK — CC0; 3D BAG (TU Delft / 3DGI) — CC BY 4.0; © OpenStreetMap contributors — ODbL.
+- Map data (detailed map: `tools/build_liekeblom.py`; town backdrop: `tools/build_leek_backdrop.py`): BAG (Kadaster) via PDOK — CC0; 3D BAG (TU Delft / 3DGI) — CC BY 4.0; © OpenStreetMap contributors — ODbL.
 - Surface textures (brick, paving, roofs, plaster, concrete, asphalt, corrugated iron, planks, ground) and props/vegetation
   (trees, shrubs, grass, bins, bags, crates, street furniture, shutters): [Poly Haven](https://polyhaven.com) — CC0.
 - HDRI sky and props (barriers, crates, barrels, lamp, car, jerrycan, ammo box, service pistol, etc.): [Poly Haven](https://polyhaven.com) — CC0.

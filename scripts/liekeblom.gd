@@ -35,8 +35,9 @@ func build(map: GameMap) -> void:
 	m.static_root.add_child(body)
 	var t0 := Time.get_ticks_msec()
 	var steps := [_ground, _roads_and_areas, _buildings, _mall_shell, _mall_interior, _hall, _boundary, _gameplay_points,
-		func(): Dressing.new().run(m, d, body)]
-	var names := ["ground", "roads", "buildings", "shell", "interior", "hall", "boundary", "points", "dressing"]
+		func(): Dressing.new().run(m, d, body),
+		func(): if not Net.is_dedicated(): LeekBackdrop.new().build(m)]
+	var names := ["ground", "roads", "buildings", "shell", "interior", "hall", "boundary", "points", "dressing", "town backdrop"]
 	for i in steps.size():
 		steps[i].call()
 		if OS.is_stdout_verbose() or Net.args.has("buildlog"):
@@ -136,10 +137,12 @@ func _ground() -> void:
 	cs.shape = sh
 	cs.position.y = -0.5
 	body.add_child(cs)
+	# paved ground covers the detailed area only; tools/build_leek_backdrop.py fills in the rest of Leek around it
 	var plane := PlaneMesh.new()
-	plane.size = Vector2(1200, 1200)
+	plane.size = Vector2(320, 310)
 	var mi := MeshInstance3D.new()
 	mi.mesh = plane
+	mi.position = Vector3(-19.9, 0, -0.8)
 	mi.material_override = Mat.world("sidewalk", Color(0.95, 0.95, 0.95), 0.5, 1.0, 0.0, 0.0)
 	m.static_root.add_child(mi)
 
