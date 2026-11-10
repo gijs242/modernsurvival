@@ -40,6 +40,22 @@ var death_dir := 1.0
 var fling := Vector3.ZERO
 var downed := false
 var crouch_k := 0.0
+# ---- procedural animation state
+var pivot: Node3D            # weapon carry pivot at the shoulders: both arms and the gun hang off it
+var carry := 0.0             # 0 = low ready, 1 = shouldered / aiming
+var hurt := false            # limping (badly wounded)
+var _last_pos := Vector3.ZERO
+var _has_last := false
+var _lv := Vector3.ZERO      # smoothed local-space velocity
+var _act := 0
+var _act_t := 0.0            # time since the current state started
+var _arm_base: Array = []    # rest rotations of [left sh, left el, right sh, right el]
+var _hit_rot := Vector3.ZERO
+var _hit_vel := Vector3.ZERO
+var _head_rot := Vector3.ZERO
+var _head_vel := Vector3.ZERO
+var _buckle := 0.0
+var _wounds := 0
 # custom rigged character
 var rig: Node3D
 var anim: AnimationPlayer
@@ -266,10 +282,28 @@ func _build() -> void:
 		_add_flash(gun.get_meta("muzzle"))
 		# sling from the gun to the shoulder
 		_part(torso, Shapes.tube(0.008, 0.008, 0.5), strap, Vector3(-0.08, 0.42, -0.1), Vector3(0.9, 0, 0.6))
+	_make_pivot()
 	if style == "shield":
 		_build_shield(torso)
 	for mi in find_children("*", "MeshInstance3D", true, false):
 		(mi as MeshInstance3D).cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
+
+
+## Arms and gun hang off one pivot at the shoulders, so lowering / raising / tilting the weapon moves the
+## hands with it.
+func _make_pivot() -> void:
+	pivot = Node3D.new()
+	pivot.name = "Carry"
+	pivot.position = Vector3(0, 0.45, -0.02)
+	torso.add_child(pivot)
+	var kids: Array = [arms[0].sh, arms[1].sh]
+	if gun:
+		kids.append(gun)
+	for n in kids:
+		torso.remove_child(n)
+		pivot.add_child(n)
+		(n as Node3D).position -= pivot.position
+	_arm_base = [arms[0].sh.rotation, arms[0].el.rotation, arms[1].sh.rotation, arms[1].el.rotation]
 
 
 ## Ballistic shield held in front of the body, with a small armoured view port.
@@ -412,34 +446,147 @@ func animate(dt: float, mv: bool, speed: float, state: int, t: float) -> void:
 		else:
 			_play("idle")
 		return
-	phase += dt * (speed * 2.2 if mv else 0.0)
-	leg_blend = move_toward(leg_blend, 1.0 if mv else 0.0, dt * 6.0)
-	var a := 0.6 * leg_blend
-	legs[0].thigh.rotation.x = sin(phase) * a
-	legs[1].thigh.rotation.x = -sin(phase) * a
-	legs[0].knee.rotation.x = -max(0.0, -sin(phase + 1.2)) * 0.9 * leg_blend
-	legs[1].knee.rotation.x = -max(0.0, sin(phase + 1.2)) * 0.9 * leg_blend
-	hips.position.y = 0.95 - abs(cos(phase)) * 0.04 * leg_blend
-	torso.rotation.x = (-0.25 if knife else -0.08) * leg_blend - 0.02
-	torso.rotation.y = sin(phase) * 0.06 * leg_blend
-	if knife:
-		arms[0].sh.rotation.x = sin(phase) * 0.8 * leg_blend + 0.2
-		arms[1].sh.rotation.x = 2.2 if state == 2 else -sin(phase) * 0.8 * leg_blend + 0.2
-	neck.rotation.x = sin(t * 1.3 + phase) * 0.02
-	# state 3 = crouched behind cover
-	var ck := 1.0 if state == 3 and not mv else 0.0
-	crouch_k = move_toward(crouch_k, ck, dt * 5.0)
+	_animate_body(dt, mv, state, t)
+	if downed:
+		rotation.x = lerp(rotation.x, -1.35, dt * 6.0)
+		position.y = lerp(position.y, 0.25, dt * 6.0)
+	elif rotation.x != 0.0:
+		rotation.x = lerp(rotation.x, 0.0, dt * 6.0)
+		position.y = lerp(position.y, 0.0, dt * 6.0)
+
+
+## States: 0 move / idle, 1 aim, 2 melee (knife / shield bash), 3 crouched, 4 aiming (sniper),
+## 5 reloading, 6 throwing a grenade, 7 staggered.
+func _animate_body(dt: float, mv: bool, state: int, t: float) -> void:
+	if state != _act:
+		_act = state
+		_act_t = 0.0
+	_act_t += dt
+	# velocity in the body's own frame (works the same for server enemies and client puppets)
+	var gp := global_position
+	var v := (gp - _last_pos) / maxf(dt, 0.001) if _has_last else Vector3.ZERO
+	_last_pos = gp
+	_has_last = true
+	if v.length() > 14.0:
+		v = Vector3.ZERO                                   # teleport / spawn
+	var lv := global_transform.basis.orthonormalized().inverse() * Vector3(v.x, 0, v.z)
+	_lv = _lv.lerp(lv, min(1.0, dt * 8.0))
+	var sp := Vector2(_lv.x, _lv.z).length()
+	var moving := sp > 0.35 and mv
+	var run := sp > 4.3
+	var fwd := -_lv.z / maxf(sp, 0.001)                   # +1 forwards, -1 backwards
+	var side := _lv.x / maxf(sp, 0.001)                   # +1 strafing right
+	phase += dt * sp * (1.75 if run else 2.25)
+	leg_blend = move_toward(leg_blend, 1.0 if moving else 0.0, dt * 6.0)
+	var amp := (0.85 if run else 0.55) * leg_blend
+	for i in 2:
+		var sgn := 1.0 if i == 0 else -1.0
+		var limp := 0.45 if hurt and i == 1 else 1.0
+		var sw := sin(phase) * sgn
+		legs[i].thigh.rotation.x = sw * amp * fwd * limp
+		legs[i].thigh.rotation.z = sw * amp * 0.45 * side * limp + (0.05 * sgn * leg_blend * abs(side))
+		legs[i].knee.rotation.x = -max(0.0, -sin(phase + 1.2) * sgn) * (1.25 if run else 0.9) * leg_blend * limp
+	var bob := absf(cos(phase)) * (0.075 if run else 0.04) * leg_blend
+	hips.position.y = 0.95 - bob - (0.05 if hurt and sin(phase) < 0.0 else 0.0) * leg_blend - _buckle * 0.25
+	var lean := (0.24 if run else 0.07) * leg_blend * maxf(fwd, 0.0)
+	torso.rotation = Vector3(-lean - 0.02, sin(phase) * 0.07 * leg_blend, (0.06 if hurt else 0.0) - side * 0.05 * leg_blend)
+	neck.rotation = Vector3(sin(t * 1.3 + phase) * 0.02, 0, 0)
+	# crouch (state 3) keeps the legs folded
+	crouch_k = move_toward(crouch_k, 1.0 if state == 3 and not moving else 0.0, dt * 5.0)
 	if crouch_k > 0.0:
 		hips.position.y -= 0.38 * crouch_k
 		for i in 2:
 			legs[i].thigh.rotation.x = lerpf(legs[i].thigh.rotation.x, -1.25 if i == 0 else -0.35, crouch_k)
 			legs[i].knee.rotation.x = lerpf(legs[i].knee.rotation.x, 1.9 if i == 0 else 1.6, crouch_k)
 		torso.rotation.x += 0.15 * crouch_k
-	if downed:
-		rotation.x = lerp(rotation.x, -1.35, dt * 6.0)
-		position.y = lerp(position.y, 0.25, dt * 6.0)
-	elif rotation.x != 0.0:
-		rotation.x = lerp(rotation.x, 0.0, dt * 6.0)
+	# hit reactions: damped springs on the torso and head
+	_hit_vel += (-_hit_rot * 140.0 - _hit_vel * 13.0) * dt
+	_hit_rot += _hit_vel * dt
+	_head_vel += (-_head_rot * 160.0 - _head_vel * 12.0) * dt
+	_head_rot += _head_vel * dt
+	_buckle = move_toward(_buckle, 0.0, dt * 2.5)
+	torso.rotation += _hit_rot
+	neck.rotation += _head_rot
+	# staggered: rocked back on the heels
+	if state == 7:
+		var e := sin(clampf(_act_t / 0.55, 0.0, 1.0) * PI)
+		torso.rotation.x += 0.35 * e
+		neck.rotation.x += 0.25 * e
+		hips.position.z = 0.08 * e
+	else:
+		hips.position.z = 0.0
+	if knife:
+		arms[0].sh.rotation.x = sin(phase) * 0.8 * leg_blend + 0.2
+		arms[1].sh.rotation.x = 2.2 if state == 2 else -sin(phase) * 0.8 * leg_blend + 0.2
+		return
+	if pivot == null:
+		return
+	# weapon carry: shouldered when aiming, low ready when moving or idle, high when sprinting
+	var want := 1.0 if state in [1, 4] else (0.55 if state == 3 else 0.12)
+	carry = move_toward(carry, want, dt * 4.0)
+	var prot := Vector3(lerpf(-0.6, 0.0, carry) - (0.12 if run and carry < 0.5 else 0.0), lerpf(0.45, 0.0, carry), 0.0)
+	var ppos := Vector3(sin(phase) * 0.012 * leg_blend, -bob * 0.3, 0)
+	for i in 4:
+		var n: Node3D = arms[i / 2].sh if i % 2 == 0 else arms[i / 2].el
+		n.rotation = n.rotation.lerp(_arm_base[i], min(1.0, dt * 10.0))
+	match state:
+		5:   # reload: tilt the gun, left hand down to the belt for a fresh mag and back
+			var k := clampf(_act_t / 2.0, 0.0, 1.0)
+			var e := sin(k * PI)
+			prot += Vector3(-0.3 * e, 0.2 * e, 0.55 * e)
+			var down := smoothstep(0.1, 0.35, k) * (1.0 - smoothstep(0.55, 0.8, k))
+			arms[0].sh.rotation = (_arm_base[0] as Vector3).lerp(Vector3(0.25, 0.0, 0.35), down)
+			arms[0].el.rotation = (_arm_base[1] as Vector3).lerp(Vector3(0.6, 0, 0), down)
+			var mag = gun.get_meta("mag", null) if gun else null
+			if mag:
+				(mag as Node3D).visible = k < 0.2 or k > 0.55
+		6:   # grenade: right arm winds up overhead and throws, gun dropped to the left hand
+			var k := clampf(_act_t / 0.6, 0.0, 1.0)
+			var swing := lerpf(3.2, 1.0, smoothstep(0.45, 0.75, k)) if k > 0.15 else lerpf(_arm_base[2].x, 3.2, k / 0.15)
+			arms[1].sh.rotation = Vector3(swing, 0.0, -0.2)
+			arms[1].el.rotation = Vector3(0.4, 0, 0)
+			prot += Vector3(-0.5, 0.6, 0.0)
+		2:   # shield bash / rifle butt: shove forward
+			var e := sin(clampf(_act_t / 0.35, 0.0, 1.0) * PI)
+			ppos.z -= 0.3 * e
+			torso.rotation.x -= 0.2 * e
+	pivot.rotation = pivot.rotation.lerp(prot, min(1.0, dt * 12.0))
+	pivot.position = Vector3(0, 0.45, -0.02) + ppos
+
+
+## A bullet hit from world-space direction `from_dir` (shooter -> body): flinch, snap the head on headshots,
+## buckle on leg hits.
+func hit_react(from_dir: Vector3, zone: int, strength := 1.0) -> void:
+	if dead:
+		return
+	var d := global_transform.basis.orthonormalized().inverse() * from_dir.normalized()
+	var k := clampf(strength, 0.3, 2.0)
+	if zone == 0:
+		_head_vel += Vector3(d.z * -9.0, randf_range(-4, 4), d.x * 9.0) * k
+	elif zone == 2:
+		_buckle = minf(1.0, _buckle + 0.6 * k)
+		_hit_vel += Vector3(-2.0, 0, d.x * 3.0) * k
+	else:
+		_hit_vel += Vector3(-d.z * 6.0, randf_range(-3, 3), d.x * 6.0) * k
+
+
+## A small blood mark on the body part that was hit, facing the shooter (max 5 per body).
+func add_wound(from_dir: Vector3, zone: int) -> void:
+	if dead or _wounds >= 5 or rig:
+		return
+	_wounds += 1
+	var part: Node3D = neck if zone == 0 else (legs[randi() % 2].thigh if zone == 2 else torso)
+	var dcl := Decal.new()
+	dcl.texture_albedo = Effects.textures().blood
+	dcl.size = Vector3(0.16, 0.5, 0.16) * (0.7 if zone == 0 else 1.0)
+	dcl.modulate = Color(0.55, 0.05, 0.04, 0.95)
+	dcl.normal_fade = 0.3
+	part.add_child(dcl)
+	var up := -from_dir.normalized()                 # decal projects along its -Y: into the body from the shooter
+	var ref := Vector3.RIGHT if abs(up.dot(Vector3.UP)) > 0.9 else Vector3.UP
+	var x := ref.cross(up).normalized()
+	var off: Vector3 = {0: Vector3(0, 0.16, 0), 2: Vector3(0, -0.25, 0)}.get(zone, Vector3(0, 0.3, 0))
+	dcl.global_transform = Transform3D(Basis(x, up, x.cross(up)), part.global_transform * off + up * 0.2)
 
 
 func _process(dt: float) -> void:

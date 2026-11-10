@@ -18,6 +18,7 @@ var font: SystemFont
 var font_bold: SystemFont
 var autotest_t := -1.0
 var browser_list: VBoxContainer
+var best_lbl: Label
 var _browse_t := 0.0
 var _query_t := 0.0
 var _pending_join := ""
@@ -230,6 +231,15 @@ func _build_menu() -> void:
 	map_opt.selected = 0 if Settings.get_val("map", "liekeblom") == "liekeblom" else 1
 	map_opt.item_selected.connect(func(i): Settings.set_val("map", "liekeblom" if i == 0 else "yard"))
 	_row(v, "Map (host / solo)", map_opt)
+	var diff_opt := OptionButton.new()
+	var dkeys := Defs.DIFFICULTY.keys()
+	for k in dkeys:
+		diff_opt.add_item("%s  (enemy damage ×%.1f)" % [Defs.DIFFICULTY[k].name, Defs.DIFFICULTY[k].dmg])
+	diff_opt.selected = max(0, dkeys.find(Settings.get_val("difficulty", "regular")))
+	diff_opt.item_selected.connect(func(i): Settings.set_val("difficulty", dkeys[i]); _refresh_best())
+	_row(v, "Difficulty (host / solo)", diff_opt)
+	best_lbl = _lbl(v, "", 15, Color(0.95, 0.8, 0.45))
+	_refresh_best()
 	quality_opt = OptionButton.new()
 	for q in ["Low", "Medium", "High", "Ultra"]:
 		quality_opt.add_item(q)
@@ -287,6 +297,8 @@ func _build_over() -> void:
 	var v: VBoxContainer = r[1]
 	_lbl(v, "MISSION FAILED", 56, Color(1.0, 0.3, 0.22), true)
 	_lbl(v, "", 24, Color(0.9, 0.88, 0.84)).name = "Sub"
+	var summ := _lbl(v, "", 18, Color(0.85, 0.83, 0.78))
+	summ.name = "Summary"
 	var g := GridContainer.new()
 	g.name = "Stats"
 	g.columns = 5
@@ -345,6 +357,7 @@ func _player_name() -> String:
 func _start_sp() -> void:
 	Net.start_sp()
 	Net.map_id = str(Net.args.get("map", Settings.get_val("map", "liekeblom")))
+	Net.difficulty = str(Net.args.get("difficulty", Settings.get_val("difficulty", "regular")))
 	_start_game()
 	game.send({"t": "join", "name": _player_name()})
 
@@ -352,6 +365,7 @@ func _start_sp() -> void:
 func _host() -> void:
 	var p := int(port_edit.text) if port_edit else Defs.DEFAULT_PORT
 	Net.map_id = str(Settings.get_val("map", "liekeblom"))
+	Net.difficulty = str(Settings.get_val("difficulty", "regular"))
 	var err := Net.host(p)
 	if err != OK:
 		_set_status("Could not host on port %d (error %d)" % [p, err], true)
@@ -435,9 +449,63 @@ func _end_session(leave := true) -> void:
 		Net.leave()
 
 
+## Best runs per map and difficulty (user://settings.cfg).
+func _best_key(map: String, d: String) -> String:
+	return "best_%s_%s" % [map, d]
+
+
+func _refresh_best() -> void:
+	if best_lbl == null:
+		return
+	var lines := []
+	for m in ["liekeblom", "yard"]:
+		var b: Dictionary = Settings.get_val(_best_key(m, Settings.get_val("difficulty", "regular")), {})
+		if not b.is_empty():
+			lines.append("%s: wave %d, %s pts" % ["De Liekeblom" if m == "liekeblom" else "Industrial Yard", int(b.wave), _thousands(int(b.score))])
+	var dname: String = Defs.DIFFICULTY.get(Settings.get_val("difficulty", "regular"), Defs.DIFFICULTY.regular).name
+	best_lbl.text = ("BEST (%s)   " % dname.to_upper()) + ("   ·   ".join(lines) if not lines.is_empty() else "no runs yet")
+
+
+func _thousands(n: int) -> String:
+	var t := str(n)
+	var out := ""
+	while t.length() > 3:
+		out = "," + t.substr(t.length() - 3) + out
+		t = t.substr(0, t.length() - 3)
+	return t + out
+
+
 func _on_game_over(stats: Array, wave: int) -> void:
 	over_menu.visible = true
-	(over_menu.find_child("Sub", true, false) as Label).text = "You survived %d wave%s" % [max(0, wave - 1), "" if wave - 1 == 1 else "s"]
+	var survived: int = max(0, wave - 1)
+	(over_menu.find_child("Sub", true, false) as Label).text = "You survived %d wave%s" % [survived, "" if survived == 1 else "s"]
+	# personal summary + high score
+	var me: Dictionary = {}
+	for st in stats:
+		if st.id == game.local_id:
+			me = st
+	var ls: Dictionary = game.local_stats
+	var shots: int = ls.get("shots", 0)
+	var acc: float = 100.0 * int(ls.get("hits", 0)) / max(1, shots)
+	var fav := "—"
+	var fav_n := 0
+	for w in ls.get("kills_w", {}):
+		if int(ls.kills_w[w]) > fav_n:
+			fav_n = int(ls.kills_w[w])
+			fav = Defs.WEAPONS[w].name if Defs.WEAPONS.has(w) else str(w).capitalize()
+	var kills: int = me.get("kills", 0)
+	var heads: int = me.get("heads", 0)
+	var secs: int = (Time.get_ticks_msec() - int(ls.get("start", Time.get_ticks_msec()))) / 1000
+	var score: int = roundi((kills * 100 + heads * 50 + survived * 500 + int(me.get("earned", 0)) * 0.1) * float(game.diff.score))
+	var key := _best_key(Net.map_id, game.diff_id)
+	var best: Dictionary = Settings.get_val(key, {})
+	var record := best.is_empty() or score > int(best.get("score", 0))
+	if record and not Net.args.has("autotest"):
+		Settings.set_val(key, {"wave": survived, "score": score, "kills": kills})
+	_refresh_best()
+	(over_menu.find_child("Summary", true, false) as Label).text = "SCORE %s%s   ·   %s\nAccuracy %.0f%%   ·   Headshots %d%%   ·   Favourite weapon: %s (%d kills)\nBest kill streak %d   ·   Time %d:%02d" % [
+		_thousands(score), "   — NEW BEST!" if record else "   (best %s)" % _thousands(int(best.get("score", 0))), game.diff.name,
+		acc, roundi(100.0 * heads / max(1, kills)), fav, fav_n, int(ls.get("best_combo", 0)), secs / 60, secs % 60]
 	var g: GridContainer = over_menu.find_child("Stats", true, false)
 	for c in g.get_children():
 		c.queue_free()
@@ -629,7 +697,7 @@ func _shots(dt: float) -> void:
 			if _shot_i == poses.size() and game.map.map_id == "yard":
 				game.timer = 0.5
 				autotest_t = 1e9
-	elif game.map.map_id != "yard" and _shot_i < poses.size() + 3:
+	elif game.map.map_id != "yard" and _shot_i < poses.size() + 5:
 		var k := _shot_i - poses.size()
 		var fwd := Vector3(-sin(lp.yaw), 0, -cos(lp.yaw))
 		if k == 0 and _soldiers.is_empty():
@@ -651,6 +719,24 @@ func _shots(dt: float) -> void:
 			_shot_i += 1
 		elif k == 2 and _shot_t - _shot_mark > 1.2:
 			_capture("ragdolls")
+			_shot_i += 1
+		elif k == 3:
+			# pose lineup: low ready, aim, reload, grenade throw, crouched, staggered
+			var right := Vector3(-fwd.z, 0, fwd.x)
+			var lineup := [[0, 0.0], [1, 0.0], [5, 0.5], [6, -0.2], [3, 0.0], [7, -0.25]]
+			for j in lineup.size():
+				game._spawn_enemy("rifleman")
+				var e: Enemy = game.enemies.values()[game.enemies.size() - 1]
+				e.global_position = lp.global_position + fwd * 5.5 + right * (j - 2.5) * 1.25
+				e.set_physics_process(false)
+				e.rotation.y = lp.yaw + PI - 0.5
+				e.st = lineup[j][0]
+				e.model._act = lineup[j][0]
+				e.model._act_t = lineup[j][1]
+			_shot_mark = _shot_t
+			_shot_i += 1
+		elif k == 4 and _shot_t - _shot_mark > 0.5:
+			_capture("poses")
 			_shot_i += 1
 			if Net.args.has("shots_quit"):
 				get_tree().quit(0)

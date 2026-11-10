@@ -756,6 +756,9 @@ func _try_fire() -> void:
 			game.fx.tracer(muzzle_pos, end, Color(4.0, 3.0, 1.6, 0.6), 0.012)
 	for hid in heli_hits:
 		game.send({"t": "hhit", "id": hid, "w": cur, "n": heli_hits[hid], "dist": origin.distance_to(first_end)})
+	game.local_stats.shots = int(game.local_stats.get("shots", 0)) + 1
+	if any_hit:
+		game.local_stats.hits = int(game.local_stats.get("hits", 0)) + 1
 	if not hits.is_empty():
 		game.send({"t": "hits", "w": cur, "hits": hits})
 	if any_hit and game.hud:

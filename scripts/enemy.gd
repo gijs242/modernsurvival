@@ -51,6 +51,10 @@ var aim_pid := -1
 var nade_cd := 0.0
 var hitboxes: Array = []   # [CollisionShape3D, base y]
 var _far := false
+var act := 0              # timed action shown as the state: 2 bash, 5 reloading, 6 throwing, 7 staggered
+var act_t := 0.0
+var bursts_left := 4      # bursts until a reload
+var bash_cd := 0.0
 var _last_mv := Vector3.ZERO
 var _last_speed := 0.0
 
@@ -173,6 +177,7 @@ func _process(dt: float) -> void:
 	else:
 		hp_pct = roundi(100.0 * hp / max_hp)
 	if model and not model.dead:
+		model.hurt = hp_pct < 40
 		model.animate(dt, moving, spd, st, game.time if game else 0.0)
 	# crouched behind cover: the hitboxes drop with the body (except the shield, which stays put)
 	var k := 0.66 if st == 3 and not moving else 1.0
@@ -235,6 +240,8 @@ func _physics_process(dt: float) -> void:
 	if st_t <= 0.0 and st == 2:
 		st = 0
 	nade_cd -= dt
+	act_t -= dt
+	bash_cd -= dt
 
 	if def.get("melee", false):
 		_path_to(tpos, dt)
@@ -246,7 +253,7 @@ func _physics_process(dt: float) -> void:
 			cd = 0.85
 			st = 2
 			st_t = 0.35
-			game.damage_player(tgt, def.dmg, pos)
+			game.damage_player(tgt, def.dmg * game.diff.dmg, pos)
 			game.ev({"t": "shot", "pid": -1, "eid": id, "w": "dog" if def.get("dog", false) else "knife", "o": eye, "e": tpos + Vector3(0, 1.2, 0), "hit": true})
 		if td < 3.0:
 			_face(dir_t, dt, 20.0)
@@ -263,6 +270,14 @@ func _physics_process(dt: float) -> void:
 			elif engage and mode == ADVANCE:
 				speed *= 0.6
 		_maybe_grenade(tgt, td, eye)
+	if hp < max_hp * 0.4 and not def.get("dog", false):
+		speed *= 0.75                                      # badly wounded: limping
+	if act_t > 0.0:
+		st = act
+		if act == 7:
+			speed *= 0.15
+		elif act == 5:
+			speed *= 0.6
 	_last_mv = mv
 	_last_speed = speed
 	_move(dt, mv, speed)
@@ -357,14 +372,28 @@ func _rifleman(dt: float, tgt: Dictionary, td: float, engage: bool, dir_t: Vecto
 				cover_search_t = randf_range(3.0, 5.0)
 	# fire control (shoots on the move too; the timer also runs while hidden so they pop out on cue)
 	cd -= dt
+	var busy := act_t > 0.0
+	if def.get("shield", false) and td < 2.2 and bash_cd <= 0.0 and not busy:
+		bash_cd = 1.5
+		act = 2
+		act_t = 0.35
+		game.damage_player(tgt, 16.0 * game.diff.dmg, global_position)
+		game.ev({"t": "shot", "pid": -1, "eid": id, "w": "bash", "o": eye, "e": tpos + Vector3(0, 1.2, 0), "hit": true})
 	if engage:
 		_face(dir_t, dt, 14.0)
-		if seen > 0.45 and cd <= 0.0:
+		if seen > 0.45 and cd <= 0.0 and not busy:
 			if burst <= 0:
 				burst = randi_range(def.burst[0], def.burst[1])
 			burst -= 1
 			cd = 60.0 / def.rpm if burst > 0 else randf_range(def.pause[0], def.pause[1])
 			_fire(tgt, td, eye, space)
+			if burst <= 0:
+				bursts_left -= 1
+				if bursts_left <= 0:                       # out of ammo: reload (a window to push them)
+					bursts_left = randi_range(3, 5)
+					act = 5
+					act_t = 2.6 if type == "shotgunner" else (3.2 if type == "heavy" else 2.0)
+					cd = max(cd, act_t)
 	else:
 		burst = 0
 		cd = max(cd, 0.0)
@@ -409,6 +438,17 @@ func _sniper(dt: float, tgt: Dictionary, td: float, engage: bool, dir_t: Vector3
 		st = 0
 		mv = _nav_dir(dir_t)
 	return mv
+
+
+## Big hits (shotgun blast, rifle round) rock the soldier back for a moment: no shooting, barely moving.
+func stagger(dmg: float) -> void:
+	if type == "heavy" or def.get("dog", false):
+		return
+	if dmg >= maxf(55.0, max_hp * 0.3):
+		_cancel_aim()
+		act = 7
+		act_t = 0.55
+		burst = 0
 
 
 func _cancel_aim() -> void:
@@ -493,8 +533,8 @@ func _maybe_grenade(tgt: Dictionary, td: float, eye: Vector3) -> void:
 	game.nades_thrown += 1
 	nade_cd = randf_range(7.0, 11.0) if nades else randf_range(18.0, 30.0)
 	game.nade_cd = 2.5
-	st = 2
-	st_t = 0.3
+	act = 6
+	act_t = 0.6
 
 
 func _nav_dir(fallback: Vector3) -> Vector3:
@@ -514,7 +554,7 @@ func _face(dir: Vector3, dt: float, rate: float) -> void:
 
 func _fire(tgt: Dictionary, td: float, eye: Vector3, space: PhysicsDirectSpaceState3D) -> void:
 	var acc_mul: float = min(1.6, 1.0 + game.wave * 0.025)
-	var acc: float = def.acc * acc_mul * (1.0 - 0.6 * min(1.0, td / (def.range * 1.3)))
+	var acc: float = def.acc * game.diff.acc * acc_mul * (1.0 - 0.6 * min(1.0, td / (def.range * 1.3)))
 	if tgt.cr:
 		acc *= 0.75
 	var hit := randf() < acc
@@ -525,7 +565,7 @@ func _fire(tgt: Dictionary, td: float, eye: Vector3, space: PhysicsDirectSpaceSt
 	var tp: Vector3 = tgt.pos
 	if hit:
 		end = tp + Vector3(0, 0.7 if tgt.cr else 1.2, 0)
-		game.damage_player(tgt, def.dmg * (1.0 + game.wave * 0.02), global_position)
+		game.damage_player(tgt, def.dmg * (1.0 + game.wave * 0.02) * game.diff.dmg, global_position)
 	else:
 		var aim := (tp + Vector3(randf_range(-1.2, 1.2), 1.3 + randf_range(-0.6, 0.9), randf_range(-1.2, 1.2)) - muzzle).normalized()
 		end = muzzle + aim * 90.0

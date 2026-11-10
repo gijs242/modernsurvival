@@ -122,6 +122,13 @@ const CAT_NAMES := {"weapons": "WEAPON ARMORY", "equipment": "EQUIPMENT ARMORY",
 const CAT_COLORS := {"weapons": Color(1.0, 0.54, 0.16), "equipment": Color(0.31, 0.82, 0.42), "air": Color(0.29, 0.66, 1.0), "gunsmith": Color(0.8, 0.45, 1.0)}
 const COMBO_NAMES := ["", "", "DOUBLE KILL", "TRIPLE KILL", "MULTI KILL", "RAMPAGE", "UNSTOPPABLE", "MASSACRE"]
 
+## Difficulty: multipliers on enemy damage, accuracy and health, and on the score (for the high-score table).
+const DIFFICULTY := {
+	"recruit": {"name": "Recruit", "dmg": 0.6, "acc": 0.8, "hp": 0.85, "score": 0.75},
+	"regular": {"name": "Regular", "dmg": 1.0, "acc": 1.0, "hp": 1.0, "score": 1.0},
+	"veteran": {"name": "Veteran", "dmg": 1.4, "acc": 1.15, "hp": 1.2, "score": 1.5},
+}
+
 const START_MONEY := 500
 const MAX_FRAGS := 4
 const MAX_MINES := 4

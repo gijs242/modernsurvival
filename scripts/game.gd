@@ -29,6 +29,8 @@ var time := 0.0
 var P := {}                  # peer id -> state dict
 var wave := 0
 var cleared := 0
+var diff: Dictionary = Defs.DIFFICULTY.regular
+var diff_id := "regular"
 var special := ""            # special wave type: "", "night", "smoke", "rushers", "snipers"
 var modifiers: Array = []    # endless-mode modifiers: "armored", "volatile"
 var state := "inter"
@@ -57,17 +59,25 @@ var snap_t := 0.0
 var _snap_n := 0
 
 # ---- client-side visuals for objects
-var obj_nodes := {}          # "kind:id" -> Node3D
+var obj_nodes := {}
+## This player's own numbers for the end-of-run summary (client side: shots and hits are only known here).
+var local_stats := {}
+
+func reset_local_stats() -> void:
+	local_stats = {"shots": 0, "hits": 0, "kills_w": {}, "best_combo": 0, "start": Time.get_ticks_msec()}          # "kind:id" -> Node3D
 
 
 func setup(p_quality: int, p_map := "yard") -> void:
 	quality = p_quality
+	diff_id = Net.difficulty if Defs.DIFFICULTY.has(Net.difficulty) else "regular"
+	diff = Defs.DIFFICULTY[diff_id]
 	is_server = multiplayer.is_server()
 	local_id = multiplayer.get_unique_id()
 	map = GameMap.new()
 	map.name = "Map"
 	add_child(map)
 	map.build(is_server, quality, p_map)
+	reset_local_stats()
 	fx = Effects.new()
 	fx.name = "Effects"
 	add_child(fx)
@@ -485,8 +495,10 @@ func _damage_enemy(e: Enemy, dmg: float, p, o := {}) -> void:
 	e.hp -= dmg
 	e.alert = true
 	if e.hp > 0.0:
+		e.stagger(dmg)
 		if p:
-			ev({"t": "hit", "to": p.id, "eid": e.id, "dmg": roundi(dmg), "head": o.get("head", false), "src": o.get("src", "")})
+			ev({"t": "hit", "to": p.id, "eid": e.id, "dmg": roundi(dmg), "head": o.get("head", false), "src": o.get("src", ""),
+				"zone": int(o.get("zone", 1)), "from": p.pos})
 		return
 	var def: Dictionary = Defs.ENEMIES[e.type]
 	enemies.erase(e.id)
@@ -738,7 +750,7 @@ func _spawn_enemy(type: String, at = null) -> void:
 	next_id += 1
 	e.type = type
 	e.game = self
-	e.max_hp = Defs.ENEMIES[type].hp * hp_mul
+	e.max_hp = Defs.ENEMIES[type].hp * hp_mul * diff.hp
 	e.hp = e.max_hp
 	if not Defs.ENEMIES[type].get("melee", false) and enemies.size() >= 3 and randf() < 0.3:
 		e.role = "flank"
@@ -997,7 +1009,7 @@ func _spawn_heli() -> void:
 	var away := Vector3(drop.x, 0, drop.z)
 	away = away.normalized() if away.length() > 1.0 else Vector3.FORWARD
 	var from := drop + away * 260.0 + Vector3(0, 55, 0)
-	var hp: float = Defs.HELI.hp * (1.0 + wave * 0.03 + (P.size() - 1) * 0.25)
+	var hp: float = Defs.HELI.hp * (1.0 + wave * 0.03 + (P.size() - 1) * 0.25) * diff.hp
 	helis[next_id] = {"pos": from, "yaw": atan2(-(drop - from).x, -(drop - from).z), "hp": hp, "max": hp, "ph": "in", "t": 0.0,
 		"drop": drop, "from": from, "troops": Defs.HELI.troops + wave / 8, "cd": 2.0, "burst": 0}
 	next_id += 1
@@ -1054,7 +1066,7 @@ func _tick_helis(dt: float) -> void:
 			var hit := randf() < 0.22
 			var end: Vector3 = tgt.pos + Vector3(0, 1.1, 0)
 			if hit:
-				damage_player(tgt, Defs.HELI.dmg * (1.0 + wave * 0.02), gun)
+				damage_player(tgt, Defs.HELI.dmg * (1.0 + wave * 0.02) * diff.dmg, gun)
 			else:
 				end += Vector3(randf_range(-2, 2), randf_range(-1.2, 0.5), randf_range(-2, 2))
 			ev({"t": "shot", "pid": -1, "w": "heli_gun", "o": gun, "e": end, "hit": hit})
@@ -1112,7 +1124,7 @@ func _snapshot() -> Dictionary:
 		extra = {"gb": glass_broken.keys(), "lo": lights_out.keys()}
 	return extra.merged({"wave": wave, "cleared": cleared, "state": state, "timer": ceili(timer), "left": enemies.size() + spawn_queue.size(),
 		"players": pl, "enemies": en, "proj": pr, "mines": mi, "turrets": tu, "drones": dr, "helis": he, "time": time,
-		"sp": special, "mods": modifiers, "pw": power})
+		"sp": special, "mods": modifiers, "pw": power, "df": diff_id})
 
 
 func _apply_snapshot(s: Dictionary) -> void:
@@ -1414,6 +1426,12 @@ func _on_kill(e: Dictionary) -> void:
 		if corpses.size() > 24:
 			corpses[0].queue_free()
 	Sfx.play_at("impact_flesh", e.pos + Vector3(0, 1, 0), 0.0)
+	if e.pid == local_id:
+		var w: String = e.get("w", "")
+		if w == "":
+			w = e.get("src", "") if e.get("src", "") != "" else ("melee" if e.get("melee", false) else "explosives")
+		local_stats.kills_w[w] = int(local_stats.kills_w.get(w, 0)) + 1
+		local_stats.best_combo = max(int(local_stats.best_combo), int(e.get("combo", 0)))
 	if e.pid == local_id and hud:
 		hud.on_kill(e)
 	elif hud:
@@ -1435,6 +1453,25 @@ func _jet_run(center: Vector3, ang: float, delay: float, length: float) -> void:
 	# red smoke on the target
 	for i in 10:
 		get_tree().create_timer(i * 0.3).timeout.connect(func(): fx.particle(false, center + Vector3(0, 0.3, 0), Vector3(randf_range(-0.3, 0.3), 1.5, randf_range(-0.3, 0.3)), 0.5, 3.0, 3.0, Color(0.8, 0.12, 0.08, 0.6)))
+
+
+# =========================================================================== client: hit feedback
+## Every peer: the body flinches (head snap / leg buckle), gets a wound mark, and blood hits the wall behind it.
+func _hit_fx(e: Dictionary, mine: bool) -> void:
+	var en: Enemy = enemies.get(e.get("eid", -1))
+	if en == null or not is_instance_valid(en) or en.model == null or not e.has("from"):
+		return
+	var chest := en.global_position + Vector3(0, 1.2 * en.s, 0)
+	var dir: Vector3 = chest - (e.from as Vector3) - Vector3(0, 1.5, 0)
+	if dir.length() < 0.01:
+		return
+	dir = dir.normalized()
+	var zone: int = e.get("zone", 1)
+	en.model.hit_react(dir, zone, float(e.dmg) / 40.0)
+	if e.get("src", "") == "":
+		en.model.add_wound(dir, zone)
+		if not mine:                      # the shooter already splattered the wall locally
+			fx.blood(chest, dir, zone == 0, get_world_3d().direct_space_state)
 
 
 # =========================================================================== client effects for the new threats

@@ -9,6 +9,7 @@ signal disconnected
 var mode := ""
 var player_name := "Soldier"
 var map_id := "liekeblom"        # "liekeblom" or "yard"; the server tells joining clients which one
+var difficulty := "regular"     # "recruit" / "regular" / "veteran"; chosen by the host
 var port := Defs.DEFAULT_PORT
 var args := {}
 
@@ -43,20 +44,23 @@ func _ready() -> void:
 		player_name = str(args.name)
 	if args.has("map"):
 		map_id = str(args.map)
+	if args.has("difficulty"):
+		difficulty = str(args.difficulty)
 	# clients learn the map from the server before building the level
 	multiplayer.peer_connected.connect(func(id):
 		var ep := multiplayer.multiplayer_peer as ENetMultiplayerPeer
 		if ep and ep.get_peer(id):
 			ep.get_peer(id).set_timeout(32, 30000, 60000)   # tolerate long level loads without dropping
 		if multiplayer.is_server() and ep:
-			_server_info.rpc_id(id, map_id))
+			_server_info.rpc_id(id, map_id, difficulty))
 	multiplayer.connection_failed.connect(func(): failed.emit("Could not connect to server"); _reset())
 	multiplayer.server_disconnected.connect(func(): disconnected.emit(); _reset())
 
 
 @rpc("authority", "call_remote", "reliable")
-func _server_info(m: String) -> void:
+func _server_info(m: String, d := "regular") -> void:
 	map_id = m
+	difficulty = d
 	connected.emit.call_deferred()      # build the level outside the network callback
 
 
@@ -114,7 +118,7 @@ func _status() -> Dictionary:
 				hostname = p.name
 	if is_dedicated():
 		hostname = str(args.get("server_name", "Dedicated server"))
-	return {"m": MAGIC, "n": hostname, "map": map_id, "p": n, "max": Defs.MAX_PLAYERS, "port": port, "w": w}
+	return {"m": MAGIC, "n": hostname, "map": map_id, "d": difficulty, "p": n, "max": Defs.MAX_PLAYERS, "port": port, "w": w}
 
 
 func _process(dt: float) -> void:
