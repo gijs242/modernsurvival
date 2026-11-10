@@ -1,7 +1,7 @@
 extends Node
-## Sound system (autoload `Sfx`). Every sound is synthesised procedurally at startup so the game
-## works with no audio files. Drop real recordings into res://assets/sounds/<name>.wav|.ogg to
-## override any of them (see README for the list of names).
+## Sound system (autoload `Sfx`). Gunshots, reloads, explosions and impacts are real recordings in
+## res://assets/sounds/ (built by tools/make_sounds.py); everything else is synthesised at startup, and any
+## missing recording falls back to its synthesised version. Drop <name>.wav|.ogg there to override a sound.
 
 const RATE := 22050
 var streams := {}
@@ -11,6 +11,7 @@ var i2 := 0
 var i3 := 0
 var ready_ok := false
 var _ambience: AudioStreamPlayer
+var _synth := {}   ## names that are synthesised (no recording found)
 
 
 func _ready() -> void:
@@ -92,17 +93,27 @@ func play(name: String, vol_db := 0.0, pitch := 1.0, var_pitch := 0.06) -> void:
 	p.play()
 
 
-## Weapon shot: new guns reuse the closest synthesised voice at a different pitch; suppressed = quiet & thin.
+## Weapon shot. Every gun has its own recording (assets/sounds/<id>.ogg, see tools/make_sounds.py);
+## guns without one fall back to the closest synthesised voice at a different pitch. Shots further than
+## FAR_DIST use the mid-distance recording (<id>_far) when there is one. Suppressed = quiet & thin.
 const GUN_VOICE := {"m9": ["pistol", 1.05], "m1911": ["pistol", 0.82], "ak47": ["ar", 0.88], "l85": ["ar", 1.08],
 	"g3a3": ["lmg", 0.92], "scar": ["ar", 0.9], "mosin": ["dmr", 0.9], "svd": ["dmr", 1.08], "mg250": ["lmg", 0.95]}
+const FAR_DIST := 35.0
 
 func play_gun(id: String, pos = null, quiet := false) -> void:
-	var v: Array = GUN_VOICE.get(id, [id if streams.has(id) else "ar", 1.0])
-	var name: String = v[0]
-	if streams.has(id):
-		name = id
+	var name := id
+	var pitch := 1.0
+	if not streams.has(id):
+		var v: Array = GUN_VOICE.get(id, ["ar", 1.0])
+		name = v[0]
+		pitch = v[1]
+	if pos != null and not quiet and streams.has(name + "_far"):
+		var cam := get_viewport().get_camera_3d()
+		if cam and cam.global_position.distance_to(pos) > FAR_DIST:
+			name += "_far"
 	var vol := -16.0 if quiet else (0.0 if pos != null else -1.0)
-	var pitch: float = v[1] * (1.6 if quiet else 1.0)
+	if quiet:
+		pitch *= 1.6 if _synth.has(name) else 1.3
 	if pos == null:
 		play(name, vol, pitch, 0.04)
 	else:
@@ -409,7 +420,18 @@ func _generate() -> void:
 	}
 	for name in defs:
 		var custom := _custom(name)
-		streams[name] = custom if custom else defs[name].call()
+		if custom:
+			streams[name] = custom
+		else:
+			streams[name] = defs[name].call()
+			_synth[name] = true
+	# recordings with no synthesised counterpart: per-weapon shots and distant variants
+	for name in GUN_VOICE.keys() + defs.keys():
+		for n in [name, name + "_far"]:
+			if not streams.has(n):
+				var custom := _custom(n)
+				if custom:
+					streams[n] = custom
 	print("[Sfx] generated %d sounds in %d ms" % [streams.size(), Time.get_ticks_msec() - t0])
 
 

@@ -183,10 +183,19 @@ Each gun is `assets/weapons/<id>.glb` (ids: `smg`, `shotgun`, `ar`, `dmr`, `lmg`
 - Good sources: Sketchfab (filter *Downloadable* + licence *CC0* or *CC-BY*, credit the authors), or paid packs on the Unity Asset Store / Fab
   that allow use in other engines.
 
-### Real weapon sounds
-Drop `.wav`/`.ogg` files into `assets/sounds/` named after the sound they replace — e.g. `ar.wav`, `smg.wav`,
-`shotgun.wav`, `pistol.wav`, `dmr.wav`, `lmg.wav`, `explosion.wav`, `hit.wav`, `kill.wav`, `step.wav`, `jet.wav`.
-The full list of names is in `scripts/sfx.gd` (`_generate()`). <https://freesound.org> has many CC0 gunshot recordings.
+### Weapon sounds
+Gunshots (one recording per weapon, plus a mid-distance `_far` take used for shots more than 35 m away), reloads,
+dry fire, weapon swap, explosions and bullet impacts are real recordings in `assets/sounds/`, built by
+`tools/make_sounds.py` from these free packs (download/extract them into one folder, then
+`python3 tools/make_sounds.py <folder>`; needs ffmpeg + numpy):
+- [The Free Firearm Sound Library](https://opengameart.org/content/the-free-firearm-sound-library) — CC0 ("Prepared SFX Library")
+- [Gun reload sounds](https://opengameart.org/content/gun-reload-sounds) — CC0
+- [Equipment Clicks II](https://opengameart.org/content/equipment-clicks-ii) — CC0
+- [2 high quality explosions](https://opengameart.org/content/2-high-quality-explosions) — CC-BY 3.0, Michel Baradari
+- [Impact](https://opengameart.org/content/impact) — CC0, qubodup
+
+Everything else (UI, hitmarkers, footsteps, ambience…) is synthesised in `scripts/sfx.gd`. To replace any sound,
+drop `<name>.wav`/`.ogg` into `assets/sounds/`; the names are in `_generate()`.
 
 ### More textures / a different sky
 `python3 tools/fetch_assets.py` re-downloads the CC0 assets. Edit the lists at the top of that script to swap
@@ -255,5 +264,9 @@ Plays two minutes of scripted waves (buying, shooting, every support item) and r
 - Surface textures (brick, paving, roofs, plaster, concrete, asphalt, corrugated iron, planks, ground) and props/vegetation
   (trees, shrubs, grass, bins, bags, crates, street furniture, shutters): [Poly Haven](https://polyhaven.com) — CC0.
 - HDRI sky and props (barriers, crates, barrels, lamp, car, jerrycan, ammo box, service pistol, etc.): [Poly Haven](https://polyhaven.com) — CC0.
+- Sounds (built with `tools/make_sounds.py`): gunshots — [The Free Firearm Sound Library](https://opengameart.org/content/the-free-firearm-sound-library), CC0;
+  reloads — [Gun reload sounds](https://opengameart.org/content/gun-reload-sounds), CC0; clicks — [Equipment Clicks II](https://opengameart.org/content/equipment-clicks-ii), CC0;
+  explosion — "2 high quality explosions" by **Michel Baradari**, [OpenGameArt](https://opengameart.org/content/2-high-quality-explosions), CC-BY 3.0;
+  impacts — by **qubodup**, [OpenGameArt](https://opengameart.org/content/impact), CC0.
 - Engine: [Godot Engine](https://godotengine.org) — MIT.
-- Everything else (code, procedural models, sounds) is part of this project.
+- Everything else (code, procedural models, synthesised sounds) is part of this project.
