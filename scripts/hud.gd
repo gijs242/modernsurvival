@@ -23,6 +23,7 @@ var hit_t := 0.0
 var hit_kill := false
 var hit_head := false
 var scope: Control
+var pip: TextureRect
 var prompt: Label
 var revive_bar: ProgressBar
 var revive_lbl: Label
@@ -83,6 +84,33 @@ func _ready() -> void:
 	dmg_layer.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	dmg_layer.draw.connect(_draw_dmg)
 	add_child(dmg_layer)
+
+	# ACOG eyepiece: the lens camera's picture, masked to a circle, with a chevron reticle
+	pip = TextureRect.new()
+	pip.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	pip.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	pip.stretch_mode = TextureRect.STRETCH_SCALE
+	var psh := Shader.new()
+	psh.code = """shader_type canvas_item;
+void fragment() {
+	vec2 p = UV * 2.0 - 1.0;
+	float r = length(p);
+	vec3 c = texture(TEXTURE, UV).rgb;
+	c *= mix(0.25, 1.0, smoothstep(1.0, 0.72, r));       // dark lens edge
+	float px = fwidth(p.x) * 1.5;
+	vec2 q = vec2(abs(p.x), p.y);
+	// red chevron pointing up at the aim point, thin black post below it
+	float chev = step(q.y, 0.0) * step(-0.09, q.y) * (1.0 - smoothstep(0.0, px * 1.5, abs(q.y + q.x * 1.2)));
+	float post = (1.0 - smoothstep(0.0, px, abs(p.x))) * step(0.11, p.y) * step(p.y, 0.95);
+	c = mix(c, vec3(0.02), post * 0.85);
+	c = mix(c, vec3(1.0, 0.12, 0.05) * 1.6, chev);
+	COLOR = vec4(c, 1.0 - smoothstep(0.97, 1.0, r));
+}"""
+	var pm := ShaderMaterial.new()
+	pm.shader = psh
+	pip.material = pm
+	pip.visible = false
+	add_child(pip)
 
 	scope = Control.new()
 	scope.set_anchors_preset(Control.PRESET_FULL_RECT)
@@ -690,6 +718,12 @@ func _process(dt: float) -> void:
 			equip_lbl.text = eq + "[/right]"
 		designate_lbl.visible = lp.designating != ""
 		scope.visible = lp.scope_view()
+		var ps: Dictionary = lp.pip_screen()
+		pip.visible = not ps.is_empty()
+		if pip.visible:
+			pip.texture = lp.pip_sv.get_texture()
+			pip.position = (ps.c as Vector2) - Vector2.ONE * float(ps.r)
+			pip.size = Vector2.ONE * float(ps.r) * 2.0
 		cross.visible = lp.ads < 0.5 and not scope.visible
 		cross.queue_redraw()
 		# revive progress: either me reviving someone, or someone reviving me

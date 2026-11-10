@@ -7,7 +7,7 @@ const WEAPONS := {
 		"falloff": [18.0, 45.0, 0.6], "zoom": 1.2, "move": 1.0},
 	"smg": {"name": "Mk II SMG", "cls": "Submachine gun", "dmg": 24.0, "rpm": 880.0, "auto": true, "mag": 32, "reserve": 224,
 		"reload": 1.9, "spread": 0.022, "ads_spread": 0.006, "bloom": 0.006, "recoil": 0.55, "pellets": 1, "head": 1.8,
-		"falloff": [14.0, 35.0, 0.5], "zoom": 2.0, "move": 1.0, "scope": true},
+		"falloff": [14.0, 35.0, 0.5], "zoom": 1.3, "move": 1.0},
 	"shotgun": {"name": "Pump Shotgun", "cls": "Shotgun", "dmg": 22.0, "rpm": 78.0, "auto": false, "mag": 7, "reserve": 49,
 		"reload": 2.6, "spread": 0.075, "ads_spread": 0.055, "bloom": 0.0, "recoil": 3.2, "pellets": 9, "head": 1.4,
 		"falloff": [7.0, 22.0, 0.2], "zoom": 1.15, "move": 0.96},
@@ -57,7 +57,7 @@ const WEAPONS := {
 const ATTACH := {
 	"reddot": {"name": "Red Dot Sight", "slot": "optic", "after": 1, "price": 600, "desc": "Clean sight picture, slightly tighter aim", "ads_spread": 0.85, "zoom": 1.3},
 	"holo": {"name": "Holographic Sight", "slot": "optic", "after": 3, "price": 900, "desc": "Wide window, fast target acquisition", "ads_spread": 0.8, "zoom": 1.25},
-	"acog": {"name": "ACOG 4x Scope", "slot": "optic", "after": 5, "price": 1600, "desc": "4x magnification", "ads_spread": 0.6, "zoom": 3.0, "scope": true},
+	"acog": {"name": "ACOG 4x Scope", "slot": "optic", "after": 5, "price": 1600, "desc": "4x magnified lens, you keep your side vision", "ads_spread": 0.6, "zoom": 1.35, "pip": 4.0},
 	"sniper_scope": {"name": "Sniper Scope 6x", "slot": "optic", "after": 8, "price": 2500, "desc": "6x magnification for long range", "ads_spread": 0.4, "zoom": 6.0, "scope": true},
 	"compensator": {"name": "Compensator", "slot": "muzzle", "after": 2, "price": 800, "desc": "-30% recoil", "recoil": 0.7},
 	"suppressor": {"name": "Suppressor", "slot": "muzzle", "after": 4, "price": 1200, "desc": "Quiet shots, no muzzle flash, -10% recoil, shorter range", "recoil": 0.9, "range": 0.85, "quiet": true},
@@ -174,6 +174,8 @@ func stats(weapon: String, atts: Dictionary) -> Dictionary:
 			w.zoom = a.zoom
 		if a.get("scope", false):
 			w.scope = true
+		if a.has("pip"):
+			w.pip = a.pip          # magnification seen through the lens (picture-in-picture)
 		if a.has("mag"):
 			w.mag = int(ceil(w.mag * a.mag))
 			if w.reserve > 0:

@@ -138,7 +138,7 @@ func build(is_server: bool, p_quality: int, id := "yard") -> void:
 	_build_environment(quality)
 	if quality < 0:
 		get_tree().node_added.connect(_cheap_lights)
-	if id == "liekeblom":
+	if id == "mall":
 		static_root = Node3D.new()
 		static_root.name = "Static"
 		if is_server:
@@ -148,7 +148,7 @@ func build(is_server: bool, p_quality: int, id := "yard") -> void:
 			nav_region.add_child(static_root)
 		else:
 			add_child(static_root)
-		LiekeblomBuilder.new().build(self)
+		MallBuilder.new().build(self)
 		_flush_merge()
 		for st in stations:
 			_armory_station(st)
@@ -234,7 +234,8 @@ void sky() {
 	env.ssao_power = 1.6
 	env.ssil_enabled = quality >= 2
 	env.ssil_intensity = 0.8
-	env.ssr_enabled = quality >= 3
+	env.ssr_enabled = quality >= 2          # the glossy mall floor tiles really want reflections
+	env.ssr_max_steps = 64 if quality >= 3 else 32
 	env.sdfgi_enabled = quality >= 2
 	env.sdfgi_use_occlusion = false
 	env.sdfgi_cascades = 3
@@ -754,7 +755,8 @@ func apply_quality(q: int) -> void:
 	quality = q
 	env.ssao_enabled = q >= 1
 	env.ssil_enabled = q >= 2
-	env.ssr_enabled = q >= 3
+	env.ssr_enabled = q >= 2
+	env.ssr_max_steps = 64 if q >= 3 else 32
 	env.sdfgi_enabled = q >= 2
 	env.glow_enabled = q >= 1
 	env.volumetric_fog_enabled = q >= 3
@@ -963,7 +965,7 @@ func _process(_dt: float) -> void:
 
 
 # ---------------------------------------------------------------- queries
-## Is this point under a roof? (mall footprint on De Liekeblom, a roof overhead on the yard)
+## Is this point under a roof? (mall footprint on the Mall map, a roof overhead on the yard)
 func indoor_at(pos: Vector3) -> bool:
 	if not indoor_polys.is_empty():
 		for poly in indoor_polys:
@@ -989,7 +991,7 @@ func step_surface(pos: Vector3) -> String:
 			return "wood"
 		"dirt", "ground":
 			return "gravel"
-	if map_id == "liekeblom":
+	if map_id == "mall":
 		if indoor_at(pos):
 			return "tile"
 		for poly in grass_polys:

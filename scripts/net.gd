@@ -8,7 +8,7 @@ signal disconnected
 
 var mode := ""
 var player_name := "Soldier"
-var map_id := "liekeblom"        # "liekeblom" or "yard"; the server tells joining clients which one
+var map_id := "mall"             # "mall" or "yard"; the server tells joining clients which one
 var difficulty := "regular"     # "recruit" / "regular" / "veteran"; chosen by the host
 var port := Defs.DEFAULT_PORT
 var args := {}

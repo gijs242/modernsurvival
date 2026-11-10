@@ -239,6 +239,72 @@ static func _gun_mat(kind: String) -> StandardMaterial3D:
 	return m
 
 
+## Models with a bulky built-in sight we strip off (region in model space, AABB) so the gun gets plain iron
+## sights instead; the second value is how far the new sight line sits below the model's original one.
+## Top of the front sight post (model space) on guns whose iron-sight picture is trimmed when aiming
+## (player.gd ADS_TRIM): this point, not the bore line, is what lines up with the screen centre.
+const FRONT_SIGHT := {"pistol": Vector3(0, 0, -0.15), "m9": Vector3(0, 0, -0.145), "m1911": Vector3(0, 0, -0.145)}
+const SIGHT_CUT := {"smg": [AABB(Vector3(-0.06, -0.057, -0.41), Vector3(0.12, 0.2, 0.37)), 0.028]}
+
+
+## Simple flip-up iron sights: rear aperture at the back of the receiver, hooded front post near the muzzle.
+static func _irons(y: float, front_z: float) -> Node3D:
+	_mats()
+	var n := Node3D.new()
+	n.name = "Irons"
+	var metal := _gun_mat("gun_metal")
+	var ring := TorusMesh.new()
+	ring.inner_radius = 0.0035
+	ring.outer_radius = 0.0075
+	ring.rings = 16
+	ring.ring_segments = 8
+	var rear := MeshInstance3D.new()
+	rear.mesh = ring
+	rear.material_override = metal
+	rear.rotation.x = PI / 2
+	rear.position = Vector3(0, y, -0.03)
+	n.add_child(rear)
+	_box(n, metal, Vector3(0.012, 0.012, 0.012), Vector3(0, y - 0.013, -0.03))
+	_box(n, metal, Vector3(0.0025, 0.012, 0.004), Vector3(0, y - 0.006, front_z))      # front post, top on the sight line
+	var hood := TorusMesh.new()
+	hood.inner_radius = 0.011
+	hood.outer_radius = 0.0135
+	hood.rings = 16
+	hood.ring_segments = 6
+	var h := MeshInstance3D.new()
+	h.mesh = hood
+	h.material_override = metal
+	h.rotation.x = PI / 2
+	h.position = Vector3(0, y - 0.001, front_z)
+	n.add_child(h)
+	_box(n, metal, Vector3(0.01, 0.014, 0.012), Vector3(0, y - 0.019, front_z))
+	return n
+
+
+static func _cut_sight(model: Node3D, box: AABB) -> void:
+	for mi in model.find_children("*", "MeshInstance3D", true, false):
+		var m := mi as MeshInstance3D
+		if m.name == "Mag" or m.get_parent().name == "Mag":
+			continue
+		var src := m.mesh
+		var out := ArrayMesh.new()
+		for si in src.get_surface_count():
+			var arr := src.surface_get_arrays(si)
+			var verts: PackedVector3Array = arr[Mesh.ARRAY_VERTEX]
+			var idx: PackedInt32Array = arr[Mesh.ARRAY_INDEX]
+			if idx.is_empty():
+				idx = PackedInt32Array(range(verts.size()))
+			var keep := PackedInt32Array()
+			for t in range(0, idx.size(), 3):
+				var c := (verts[idx[t]] + verts[idx[t + 1]] + verts[idx[t + 2]]) / 3.0
+				if not box.has_point(c):
+					keep.append_array([idx[t], idx[t + 1], idx[t + 2]])
+			arr[Mesh.ARRAY_INDEX] = keep
+			out.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arr)
+			out.surface_set_material(out.get_surface_count() - 1, src.surface_get_material(si))
+		m.mesh = out
+
+
 static func _custom(id: String) -> Node3D:
 	for ext in ["glb", "gltf"]:
 		var path := "res://assets/weapons/%s.%s" % [id, ext]
@@ -254,6 +320,14 @@ static func _custom(id: String) -> Node3D:
 				var mat := m.mesh.surface_get_material(i)
 				if mat and String(mat.resource_name).begins_with("gun_"):
 					m.set_surface_override_material(i, _gun_mat(String(mat.resource_name).get_slice(".", 0)))
+		if SIGHT_CUT.has(id):
+			_cut_sight(model, SIGHT_CUT[id][0])
+			root.set_meta("sight_drop", SIGHT_CUT[id][1])
+			root.add_child(_irons(-float(SIGHT_CUT[id][1]), -0.36))
+		if FRONT_SIGHT.has(id):
+			root.set_meta("front_sight", FRONT_SIGHT[id])
+		if SIGHT_CUT.has(id):
+			root.set_meta("front_sight", Vector3(0, -float(SIGHT_CUT[id][1]), -0.36))
 		var muzzle: Node3D = model.find_child("Muzzle", true, false)
 		if muzzle == null:
 			muzzle = Node3D.new()
@@ -303,7 +377,7 @@ static func add_attachments(gun: Node3D, weapon: String, atts: Dictionary) -> vo
 	var pistol: bool = Defs.WEAPONS.get(weapon, {}).get("pistol", false) or weapon == "pistol"
 	var muzzle: Node3D = gun.get_meta("muzzle")
 	var grip_l: Vector3 = gun.get_meta("grip_l", Vector3(0, -0.04, -0.3))
-	var sight_y := 0.0 if custom else 0.11
+	var sight_y: float = (0.0 if custom else 0.11) - float(gun.get_meta("sight_drop", 0.0))
 	var optic_z := -0.05 if pistol else -0.1
 	for slot in atts:
 		var id: String = atts[slot]
@@ -311,12 +385,17 @@ static func add_attachments(gun: Node3D, weapon: String, atts: Dictionary) -> vo
 		a.name = "Att_" + slot
 		gun.add_child(a)
 		match id:
+			"reddot", "holo", "acog", "sniper_scope":
+				if gun.find_child("Irons", false, false):
+					(gun.find_child("Irons", false, false) as Node3D).visible = false
+		match id:
 			"reddot":
+				# open tube: you look straight through it at a red dot on the lens
 				a.position = Vector3(0, sight_y, optic_z)
-				_cyl_z(a, metal, 0.017, 0.045, Vector3.ZERO)
-				_box(a, metal, Vector3(0.022, 0.03, 0.04), Vector3(0, -0.028, 0))
-				_lens(a, 0.015, Vector3(0, 0, -0.02))
-				_dot(a, 0.0015, Vector3(0, 0, -0.01))
+				_tube(a, 0.017, 0.045, Vector3.ZERO)
+				_box(a, metal, Vector3(0.022, 0.012, 0.04), Vector3(0, -0.023, 0))
+				_lens(a, 0.0155, Vector3(0, 0, -0.018))
+				_dot(a, 0.0009, Vector3(0, 0, -0.017))
 			"holo":
 				a.position = Vector3(0, sight_y, optic_z)
 				_box(a, poly, Vector3(0.042, 0.016, 0.085), Vector3(0, -0.03, 0.01))
@@ -332,21 +411,28 @@ static func add_attachments(gun: Node3D, weapon: String, atts: Dictionary) -> vo
 				r.position = Vector3(0, 0, -0.025)
 				a.add_child(r)
 			"acog":
+				# hollow scope body; the eyepiece shows a magnified picture (rendered by the player's lens camera)
 				a.position = Vector3(0, sight_y, optic_z + 0.02)
-				_cyl_z(a, metal, 0.019, 0.12, Vector3.ZERO)
-				_cyl_z(a, metal, 0.023, 0.03, Vector3(0, 0, -0.07))
-				_cyl_z(a, metal, 0.02, 0.02, Vector3(0, 0, 0.065))
-				_box(a, metal, Vector3(0.03, 0.03, 0.08), Vector3(0, -0.03, 0))
-				_lens(a, 0.02, Vector3(0, 0, -0.086))
+				_tube(a, 0.019, 0.12, Vector3.ZERO)
+				_tube(a, 0.023, 0.03, Vector3(0, 0, -0.07))
+				_tube(a, 0.021, 0.02, Vector3(0, 0, 0.065))
+				_box(a, metal, Vector3(0.03, 0.018, 0.08), Vector3(0, -0.027, 0))
+				_box(a, metal, Vector3(0.012, 0.012, 0.03), Vector3(0, 0.024, -0.02))
+				var eye := Node3D.new()
+				eye.name = "PipLens"
+				eye.position = Vector3(0, 0, 0.074)
+				a.add_child(eye)
+				gun.set_meta("pip_lens", eye)
+				gun.set_meta("pip_r", 0.0195)
 			"sniper_scope":
 				a.position = Vector3(0, sight_y, optic_z + 0.03)
-				_cyl_z(a, metal, 0.015, 0.26, Vector3.ZERO)
-				_cyl_z(a, metal, 0.025, 0.07, Vector3(0, 0, -0.15))
-				_cyl_z(a, metal, 0.02, 0.05, Vector3(0, 0, 0.14))
+				_tube(a, 0.015, 0.26, Vector3.ZERO)
+				_tube(a, 0.025, 0.07, Vector3(0, 0, -0.15))
+				_tube(a, 0.02, 0.05, Vector3(0, 0, 0.14))
 				_box(a, metal, Vector3(0.02, 0.022, 0.02), Vector3(0, 0.02, 0))
 				_box(a, metal, Vector3(0.022, 0.02, 0.02), Vector3(0.02, 0, 0))
 				for z in [-0.06, 0.07]:
-					_box(a, metal, Vector3(0.026, 0.035, 0.018), Vector3(0, -0.028, z))
+					_box(a, metal, Vector3(0.026, 0.02, 0.018), Vector3(0, -0.024, z))
 				_lens(a, 0.024, Vector3(0, 0, -0.186))
 			"suppressor":
 				var len := 0.12 if pistol else 0.17
@@ -392,9 +478,33 @@ static func _cyl_z(p: Node3D, m: Material, r: float, length: float, pos: Vector3
 	return mi
 
 
+static var _tube_m: StandardMaterial3D
+
+## Open-ended optic tube (no end caps, both faces drawn) so you can see through it.
+static func _tube(p: Node3D, r: float, length: float, pos: Vector3) -> MeshInstance3D:
+	if _tube_m == null:
+		_tube_m = _gun_mat("gun_metal").duplicate()
+		_tube_m.cull_mode = BaseMaterial3D.CULL_DISABLED
+	var mi := MeshInstance3D.new()
+	var cm := CylinderMesh.new()
+	cm.top_radius = r
+	cm.bottom_radius = r
+	cm.height = length
+	cm.radial_segments = 24
+	cm.rings = 1
+	cm.cap_top = false
+	cm.cap_bottom = false
+	mi.mesh = cm
+	mi.material_override = _tube_m
+	mi.position = pos
+	mi.rotation.x = PI / 2
+	p.add_child(mi)
+	return mi
+
+
 static func _lens(p: Node3D, r: float, pos: Vector3) -> void:
 	var g := StandardMaterial3D.new()
-	g.albedo_color = Color(0.3, 0.45, 0.5, 0.18)
+	g.albedo_color = Color(0.55, 0.7, 0.75, 0.08)
 	g.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
 	g.metallic = 0.9
 	g.roughness = 0.02

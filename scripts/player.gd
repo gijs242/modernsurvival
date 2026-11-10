@@ -20,6 +20,8 @@ const HIP_DEFAULT := Vector3(0.15, -0.16, -0.3)
 const ADS := {"pistol": Vector3(0, -0.068, -0.3), "smg": Vector3(0, -0.11, -0.26), "shotgun": Vector3(0, -0.073, -0.3),
 	"ar": Vector3(0, -0.117, -0.22), "dmr": Vector3(0, -0.12, -0.2), "lmg": Vector3(0, -0.133, -0.28),
 	"launcher": Vector3(0.07, -0.13, -0.26), "designator": Vector3(0, -0.1, -0.25)}
+## Iron-sight trim at full ADS: (height offset m, pitch rad). Negative pitch tips the muzzle down.
+const ADS_TRIM := {"pistol": Vector2(-0.0078, 0.052), "m9": Vector2(-0.0067, 0.0465), "m1911": Vector2(-0.0057, 0.0394)}
 
 var peer_id := 0
 var game: Game
@@ -95,6 +97,8 @@ var nvg_on := false
 var nvg_layer: CanvasLayer
 var spec_i := 0            # which teammate we spectate while dead
 var spec_name := ""
+var pip_sv: SubViewport      # magnified view shown in the ACOG eyepiece
+var pip_cam: Camera3D
 
 
 # ======================================================================= stats with attachments
@@ -110,6 +114,28 @@ func ws(w := "") -> Dictionary:
 
 func scope_view() -> bool:
 	return ws().get("scope", false) and ads > 0.92 and designating == ""
+
+
+## Effective magnification for mouse sensitivity / breath sway (lens optics magnify only what's in the lens).
+func aim_mag() -> float:
+	var w := ws()
+	return maxf(float(w.zoom), float(w.get("pip", 0.0)) * 0.55)
+
+
+## Picture-in-picture optic (ACOG): where its eyepiece is on screen, {c: Vector2, r: float}, or {} if not shown.
+func pip_screen() -> Dictionary:
+	if pip_sv == null or pip_sv.render_target_update_mode == SubViewport.UPDATE_DISABLED or vm == null or not vm.visible:
+		return {}
+	var gun: Node3D = vm.get_meta("gun")
+	if not gun.has_meta("pip_lens"):
+		return {}
+	var lens: Node3D = gun.get_meta("pip_lens")
+	var p: Vector3 = lens.global_position
+	if vm_cam.is_position_behind(p):
+		return {}
+	var c := vm_cam.unproject_position(p)
+	var e := vm_cam.unproject_position(p + vm_cam.global_transform.basis.y * float(gun.get_meta("pip_r")))
+	return {"c": c, "r": c.distance_to(e)}
 
 
 # ======================================================================= setup
@@ -199,6 +225,17 @@ func _setup_local() -> void:
 	muzzle_light.light_energy = 0.0
 	muzzle_light.shadow_enabled = false
 	add_child(muzzle_light)
+	pip_sv = SubViewport.new()
+	pip_sv.size = Vector2i(512, 512)
+	pip_sv.render_target_update_mode = SubViewport.UPDATE_DISABLED
+	pip_sv.msaa_3d = Viewport.MSAA_2X if game.quality >= 1 else Viewport.MSAA_DISABLED
+	pip_sv.positional_shadow_atlas_size = 1024
+	add_child(pip_sv)
+	pip_cam = Camera3D.new()
+	pip_cam.cull_mask = cam.cull_mask
+	pip_cam.near = 0.1
+	pip_cam.far = 1200.0
+	pip_sv.add_child(pip_cam)
 	_sync_weapons(["pistol"])
 	_equip("pistol", true)
 
@@ -295,7 +332,7 @@ func _unhandled_input(ev: InputEvent) -> void:
 			spec_i -= 1
 		return
 	if ev is InputEventMouseMotion and Input.mouse_mode == Input.MOUSE_MODE_CAPTURED:
-		var zoom := lerpf(1.0, ws().zoom, ads)
+		var zoom := lerpf(1.0, aim_mag(), ads)
 		var s := 0.0022 * sens / zoom
 		yaw -= ev.relative.x * s
 		pitch = clamp(pitch - ev.relative.y * s, -1.5, 1.5)
@@ -485,6 +522,12 @@ func _update_camera(dt: float) -> void:
 	vm_cam.global_transform = cam.global_transform
 	vm_root.global_transform = cam.global_transform
 	vm_cam.fov = lerpf(58.0, 48.0, ads)
+	var pip: float = ws().get("pip", 0.0)
+	var pip_on := pip > 0.0 and ads > 0.35 and designating == "" and vm != null and vm.visible and not dead
+	pip_sv.render_target_update_mode = SubViewport.UPDATE_ALWAYS if pip_on else SubViewport.UPDATE_DISABLED
+	if pip_on:
+		pip_cam.global_transform = cam.global_transform
+		pip_cam.fov = fov / pip
 	if flash_t > 0.0:
 		flash_t -= dt
 		if flash_t <= 0.0:
@@ -495,7 +538,7 @@ func _update_camera(dt: float) -> void:
 ## Scoped: the sight drifts with your breathing. Hold Shift to hold your breath (about 4 s) for a steady
 ## shot; run out and the sway is worse for a moment while you catch your breath.
 func _update_breath(dt: float, input_ok: bool) -> void:
-	var scoped: bool = ads > 0.9 and ws().zoom >= 2.5 and designating == ""
+	var scoped: bool = ads > 0.9 and aim_mag() >= 2.0 and designating == ""
 	var want: bool = scoped and input_ok and Input.is_action_pressed("sprint") and winded_t <= 0.0 and breath > 0.0
 	if want and not holding_breath:
 		Sfx.play("breath_in", -12.0, 1.0, 0.05)
@@ -909,6 +952,11 @@ func _update_viewmodel(dt: float) -> void:
 			hip = Vector3(0.13, -0.11, -0.36)
 	var pos := hip.lerp(adsp, ads)
 	var rot := Vector3.ZERO
+	# per-gun sight-picture trim so the front post sits exactly on the point of impact
+	var trim: Vector2 = ADS_TRIM.get(w, Vector2.ZERO) if atts_of(w).get("optic", "") == "" else Vector2.ZERO
+	pos.y += trim.x * ads
+	pos.y += float((vm.get_meta("gun") as Node3D).get_meta("sight_drop", 0.0)) * ads     # stripped built-in sight: lower sight line
+	rot.x += trim.y * ads
 	var hv := Vector2(velocity.x, velocity.z).length()
 	var bob_amt: float = clamp(hv / 6.0, 0.0, 1.3) * (1.0 - ads) * (1.0 if is_on_floor() else 0.2)
 	pos += Vector3(sin(bob_t * 1.4) * 0.012, -abs(cos(bob_t * 1.4)) * 0.012, 0) * bob_amt
@@ -995,7 +1043,7 @@ func _update_interaction() -> void:
 	var st := game.map.station_near(global_position, 2.2)
 	if not st.is_empty():
 		interact_prompt = "Press [E] to open the %s" % Defs.CAT_NAMES[st.cat]
-	elif ads > 0.9 and ws().zoom >= 2.5:
+	elif ads > 0.9 and aim_mag() >= 2.0:
 		interact_prompt = "Breath held — %.1f s" % breath if holding_breath else ("Catching your breath…" if winded_t > 0.0 else "Hold [Shift] to hold your breath")
 
 

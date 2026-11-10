@@ -5,6 +5,7 @@ var game: Game
 var hud: Hud
 var view_layer: CanvasLayer
 var ui: CanvasLayer
+var postfx: ColorRect
 var menu: Control
 var pause_menu: Control
 var over_menu: Control
@@ -35,6 +36,19 @@ func _ready() -> void:
 	view_layer.name = "ViewLayer"
 	view_layer.layer = 0
 	add_child(view_layer)
+	# finishing pass (sharpen, grade, lens) between the 3D view and the HUD
+	var post_layer := CanvasLayer.new()
+	post_layer.name = "PostLayer"
+	post_layer.layer = 1
+	add_child(post_layer)
+	postfx = ColorRect.new()
+	postfx.set_anchors_preset(Control.PRESET_FULL_RECT)
+	postfx.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var pm := ShaderMaterial.new()
+	pm.shader = load("res://scripts/postfx.gdshader")
+	postfx.material = pm
+	postfx.visible = false
+	post_layer.add_child(postfx)
 	ui = CanvasLayer.new()
 	ui.name = "UI"
 	ui.layer = 10
@@ -57,7 +71,7 @@ func _ready() -> void:
 	if Net.args.has("join"):
 		name_edit.text = Net.player_name
 		_join(str(Net.args.join), Net.port)
-	elif Net.args.has("autotest") or Net.args.has("shots") or Net.args.has("selftest") or Net.args.has("perfprobe"):
+	elif Net.args.has("autotest") or Net.args.has("shots") or Net.args.has("selftest") or Net.args.has("perfprobe") or Net.args.has("scopetest"):
 		_start_sp()
 
 
@@ -231,10 +245,10 @@ func _build_menu() -> void:
 	port_edit.text_changed.connect(func(t): Settings.set_val("port", int(t)))
 	_row(v, "Port", port_edit)
 	var map_opt := OptionButton.new()
-	map_opt.add_item("De Liekeblom (Leek)")
+	map_opt.add_item("Mall")
 	map_opt.add_item("Industrial Yard")
-	map_opt.selected = 0 if Settings.get_val("map", "liekeblom") == "liekeblom" else 1
-	map_opt.item_selected.connect(func(i): Settings.set_val("map", "liekeblom" if i == 0 else "yard"))
+	map_opt.selected = 1 if Settings.get_val("map", "mall") == "yard" else 0
+	map_opt.item_selected.connect(func(i): Settings.set_val("map", "mall" if i == 0 else "yard"))
 	_row(v, "Map (host / solo)", map_opt)
 	var diff_opt := OptionButton.new()
 	var dkeys := Defs.DIFFICULTY.keys()
@@ -251,6 +265,11 @@ func _build_menu() -> void:
 	quality_opt.selected = int(Settings.get_val("quality", 2)) + 1
 	quality_opt.item_selected.connect(func(i): Settings.set_val("quality", i - 1); _apply_window_settings())
 	_row(v, "Graphics", quality_opt)
+	var pfx := CheckBox.new()
+	pfx.text = "Sharpening, colour grade and lens effects"
+	pfx.button_pressed = bool(Settings.get_val("postfx", true))
+	pfx.toggled.connect(func(on): Settings.set_val("postfx", on))
+	_row(v, "Post-processing", pfx)
 	_row(v, "Mouse sensitivity", _slider("sens", 0.2, 3.0, 0.05, 1.0))
 	_row(v, "Field of view", _slider("fov", 60, 100, 1, 78))
 	_row(v, "Volume", _slider("volume", 0, 1, 0.05, 0.8, func(x): Sfx.set_volume(x)))
@@ -359,9 +378,14 @@ func _player_name() -> String:
 	return n if n != "" else "Soldier"
 
 
+## Map id from settings / command line; anything unknown (e.g. an id saved by an older version) is the Mall.
+func _map_id(id: String) -> String:
+	return "yard" if id == "yard" else "mall"
+
+
 func _start_sp() -> void:
 	Net.start_sp()
-	Net.map_id = str(Net.args.get("map", Settings.get_val("map", "liekeblom")))
+	Net.map_id = _map_id(str(Net.args.get("map", Settings.get_val("map", "mall"))))
 	Net.difficulty = str(Net.args.get("difficulty", Settings.get_val("difficulty", "regular")))
 	_start_game()
 	game.send({"t": "join", "name": _player_name()})
@@ -369,7 +393,7 @@ func _start_sp() -> void:
 
 func _host() -> void:
 	var p := int(port_edit.text) if port_edit else Defs.DEFAULT_PORT
-	Net.map_id = str(Settings.get_val("map", "liekeblom"))
+	Net.map_id = _map_id(str(Settings.get_val("map", "mall")))
 	Net.difficulty = str(Settings.get_val("difficulty", "regular"))
 	var err := Net.host(p)
 	if err != OK:
@@ -463,10 +487,10 @@ func _refresh_best() -> void:
 	if best_lbl == null:
 		return
 	var lines := []
-	for m in ["liekeblom", "yard"]:
+	for m in ["mall", "yard"]:
 		var b: Dictionary = Settings.get_val(_best_key(m, Settings.get_val("difficulty", "regular")), {})
 		if not b.is_empty():
-			lines.append("%s: wave %d, %s pts" % ["De Liekeblom" if m == "liekeblom" else "Industrial Yard", int(b.wave), _thousands(int(b.score))])
+			lines.append("%s: wave %d, %s pts" % ["Mall" if m == "mall" else "Industrial Yard", int(b.wave), _thousands(int(b.score))])
 	var dname: String = Defs.DIFFICULTY.get(Settings.get_val("difficulty", "regular"), Defs.DIFFICULTY.regular).name
 	best_lbl.text = ("BEST (%s)   " % dname.to_upper()) + ("   ·   ".join(lines) if not lines.is_empty() else "no runs yet")
 
@@ -598,7 +622,7 @@ func _update_browser(dt: float) -> void:
 		browser_list.add_child(h)
 		var full: bool = int(info.get("p", 0)) >= int(info.get("max", 4))
 		var l := _lbl(h, "%s   ·   %s   ·   %d/%d players   ·   wave %d" % [str(info.get("n", "?")).substr(0, 18),
-			"De Liekeblom" if info.get("map", "") == "liekeblom" else "Industrial Yard", int(info.get("p", 0)), int(info.get("max", 4)), int(info.get("w", 0))], 16)
+			"Mall" if info.get("map", "") == "mall" else "Industrial Yard", int(info.get("p", 0)), int(info.get("max", 4)), int(info.get("w", 0))], 16)
 		l.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		l.tooltip_text = k
 		var b := Button.new()
@@ -674,9 +698,6 @@ func _pp_apply(step: String) -> void:
 		"omni_lights":
 			for l in game.map.find_children("*", "OmniLight3D", true, false):
 				(l as OmniLight3D).visible = false
-		"backdrop":
-			var b := game.map.find_child("LeekBackdrop", true, false)
-			if b: b.visible = false
 		"dressing":
 			for n in game.map.static_root.get_children():
 				if n is MeshInstance3D or n is MultiMeshInstance3D:
@@ -723,8 +744,66 @@ func _fps_guard(dt: float) -> void:
 		_fg_cool = 6.0
 
 
+# ======================================================================= optic screenshots (dev tool)
+## --scopetest <dir>: aim down sights with every weapon and every optic that fits it, one screenshot each.
+var _sc_list: Array = []
+var _sc_i := -1
+var _sc_t := 0.0
+
+func _scopetest(dt: float) -> void:
+	if game == null:
+		return
+	var lp: Player = game.player_nodes.get(game.local_id)
+	var p: Dictionary = game.P.get(game.local_id, {})
+	if lp == null or p.is_empty():
+		return
+	p.hp = 100.0
+	game.timer = 99.0
+	game.cleared = 20
+	p.money = 999999
+	if _sc_list.is_empty():
+		for w in Defs.WEAPONS:
+			if w == "launcher" or (Net.args.has("scopeonly") and not w in str(Net.args.scopeonly).split(",")):
+				continue
+			_sc_list.append([w, ""])
+			for o in ["reddot", "holo", "acog", "sniper_scope"]:
+				if Defs.attach_fits(w, o):
+					_sc_list.append([w, o])
+	_sc_t += dt
+	# look along the main corridor at a shop sign ~20 m away
+	lp.global_position = game.map.player_spawns[0]
+	lp.yaw = -float(game.map.get_meta("theta", 0.0)) + PI / 2
+	lp.pitch = 0.0
+	lp.velocity = Vector3.ZERO
+	if _sc_i >= 0 and _sc_t > 1.2:
+		var it: Array = _sc_list[_sc_i]
+		_capture("%s_%s" % [it[0], it[1] if it[1] != "" else "iron"])
+		print("[scope] %s + %s: scope_view=%s zoom=%.1f fov=%.1f vm_visible=%s" % [it[0], it[1], lp.scope_view(), lp.ws().zoom, lp.cam.fov, lp.vm.visible])
+	if _sc_i < 0 or _sc_t > 1.2:
+		_sc_i += 1
+		_sc_t = 0.0
+		if _sc_i >= _sc_list.size():
+			get_tree().quit()
+			return
+		var it: Array = _sc_list[_sc_i]
+		p.weapons = ["pistol", it[0]] if it[0] != "pistol" else ["pistol"]
+		p.att = {}
+		if it[1] != "":
+			p.att[it[0]] = {"optic": it[1]}
+		lp.state["w"] = p.weapons
+		lp.state["at"] = p.att.duplicate(true)
+		lp._sync_weapons(p.weapons)
+		lp._equip(it[0], true)
+		lp._set_viewmodel(it[0])
+		lp.force_ads = 1.0
+
+
 var _pf_sum_dummy := 0
 func _process(dt: float) -> void:
+	if postfx:
+		postfx.visible = game != null and bool(Settings.get_val("postfx", true)) and int(Settings.get_val("quality", 2)) >= 0 and not Net.is_dedicated()
+	if Net.args.has("scopetest"):
+		_scopetest(dt)
 	_fps_guard(dt)
 	if Net.args.has("perfprobe"):
 		_perfprobe(dt)
@@ -759,40 +838,33 @@ const SHOT_POSES := [
 	[16.5, Vector3(20, 0, -3), 2.1, 0.0, "containers", false, "ar"],
 ]
 
-func _liekeblom_poses() -> Array:
+func _mall_poses() -> Array:
 	var th: float = game.map.get_meta("theta", 0.0)
 	var sp: Vector3 = game.map.player_spawns[0]
 	var st: Dictionary = game.map.stations[1]
 	var f: Vector3 = st.facing
-	var e0: Array = (game.map.get_meta("entrances", []) as Array)
-	var ext: Vector3 = game.map.spawns[0]
-	if not e0.is_empty():
-		var ent := Vector3(e0[0][0], 0, e0[0][1])
-		var outward := (ent - sp).normalized()
-		ext = ent + outward * 16.0
-	var to_mall := ext - sp
-	return [
+	var poses := [
 		[1.0, sp, -th, 0.05, "hall", false, "ak47"],
 		[1.5, sp, -th + 0.9, 0.12, "hall_roof", false, "scar"],
 		[2.0, sp, -th + PI / 2, 0.0, "corridor", true, "ar"],
 		[2.5, st.pos + f * 4.4, atan2(f.x, f.z), -0.05, "armory", false, "m1911"],
-		[3.0, ext, atan2(to_mall.x, to_mall.z), 0.06, "street", false, "g3a3"],
-		[3.5, ext, atan2(to_mall.x, to_mall.z) + 2.2, 0.03, "street2", false, "mg250"],
-	] + _roof_poses()
-
-
-func _roof_poses() -> Array:
-	if not game.map.has_meta("roof_stairs"):
-		return []
-	var b: Vector3 = game.map.get_meta("roof_stairs")
-	var t: Vector3 = game.map.get_meta("roof_top")
-	var nest: Vector3 = game.map.get_meta("roof_nest")
-	var mid := (b + Vector3(t.x, 0, t.z)) * 0.5
-	var out := Vector3(mid.x - nest.x, 0, mid.z - nest.z).normalized()
-	var cam := mid + out * 9.0 + Vector3(-out.z, 0, out.x) * 3.0
-	var look := mid - cam
-	return [[4.0, cam, atan2(-look.x, -look.z), 0.12, "roof_stairs", false, "ak47"],
-		[4.5, nest, atan2(-out.x, -out.z), -0.08, "roof_nest", false, "svd"]]
+	]
+	# looking out of each entrance into its loading bay, and from the bay back into the mall
+	var t := 3.0
+	var k := 0
+	for dd in game.map.get_meta("doors", []):
+		var door: Vector3 = dd[0]
+		var out: Vector3 = dd[1]
+		poses.append([t, door - out * 5.0, atan2(-out.x, -out.z), 0.02, "entrance_%d" % k, false, "g3a3"])
+		poses.append([t + 0.5, door + out * 7.0, atan2(out.x, out.z), 0.02, "bay_%d" % k, false, "mg250"])
+		t += 1.0
+		k += 1
+	# a look into every shop from its doorway
+	for sh in game.map.get_meta("shop_views", []):
+		poses.append([t, sh[0], atan2(-(sh[1] as Vector3).x, -(sh[1] as Vector3).z), -0.08, "shop_%d" % k, false, "pistol"])
+		t += 0.5
+		k += 1
+	return poses
 
 
 func _shots(dt: float) -> void:
@@ -807,7 +879,7 @@ func _shots(dt: float) -> void:
 		return
 	p.hp = 100.0
 	p.downed = false
-	var poses: Array = SHOT_POSES if game.map.map_id == "yard" else _liekeblom_poses()
+	var poses: Array = SHOT_POSES if game.map.map_id == "yard" else _mall_poses()
 	if _shot_i < poses.size():
 		var pose: Array = poses[_shot_i]
 		game.timer = 60.0
@@ -880,7 +952,7 @@ func _shots(dt: float) -> void:
 
 
 func _capture(name: String) -> void:
-	var dir := str(Net.args.shots)
+	var dir := str(Net.args.get("shots", Net.args.get("scopetest", "user://shots")))
 	DirAccess.make_dir_recursive_absolute(dir)
 	var img := get_viewport().get_texture().get_image()
 	img.save_png("%s/%s.png" % [dir, name])
@@ -1093,7 +1165,8 @@ func _selftest(dt: float) -> void:
 					var gun: Node3D = lp.vm.get_meta("gun")
 					var cam := lp.vm_cam
 					var centre := cam.get_viewport().get_visible_rect().size * 0.5
-					var pt := cam.unproject_position(gun.global_transform * Vector3(0, 0 if gun.has_meta("custom") else 0.11, -1.5))
+					var sight: Vector3 = gun.get_meta("front_sight", Vector3(0, 0 if gun.has_meta("custom") else 0.11, -1.5))
+					var pt := cam.unproject_position(gun.global_transform * sight)
 					var err := pt.distance_to(centre)
 					_st_check("sight line centred: %s" % _st_weapons[_st_wi - 1], err < 2.0 or lp.scope_view(), "error=%.2f px%s" % [err, " (scoped)" if lp.scope_view() else ""])
 				if _st_wi >= _st_weapons.size():
@@ -1143,7 +1216,10 @@ func _selftest(dt: float) -> void:
 				_st_next = _st_t + 1.0
 		15:
 			if _st_t >= _st_next:
-				_st_check("ACOG switches to a magnified scope view", lp.scope_view(), "zoom=%.1f" % lp.ws().zoom)
+				var ps: Dictionary = lp.pip_screen()
+				var off := (ps.c as Vector2).distance_to(lp.vm_cam.get_viewport().get_visible_rect().size * 0.5) if not ps.is_empty() else -1.0
+				_st_check("ACOG shows a magnified lens picture centred on the aim point", not ps.is_empty() and off < 3.0 and float(lp.ws().get("pip", 0.0)) >= 3.0,
+					"lens radius=%.0f px, offset=%.1f px, magnification=%.1fx" % [float(ps.get("r", 0.0)), off, float(lp.ws().get("pip", 0.0))])
 				lp.force_ads = -1.0
 				_st_step = 16
 				if game.map.has_meta("roof_stairs"):

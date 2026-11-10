@@ -29,34 +29,39 @@ TEXTURES = {
     "plaster": "PaintedPlaster017",
     "burlap": "Fabric045",
     "roof_dark": "RoofingTiles013A",
-    "roof_red": "RoofingTiles014A",
-    "klinkers": "PavingStones152",
-    "sidewalk": "PavingStones128",
-    "mall_floor": "Tiles107",
     "gravel": "Gravel023",
 }
 MAPS = {"_Color.jpg": "albedo.jpg", "_NormalGL.jpg": "normal.jpg", "_Roughness.jpg": "roughness.jpg",
         "_AmbientOcclusion.jpg": "ao.jpg", "_Metalness.jpg": "metallic.jpg"}
 
-# Poly Haven 2K photo-scanned textures (override the ambientCG set of the same name)
+# Poly Haven photo-scanned textures (override the ambientCG set of the same name)
 PH_TEXTURES = {
-    "bricks": "red_brick_03", "klinkers": "brick_pavement_02", "sidewalk": "concrete_pavement", "asphalt": "asphalt_02",
-    "roof_red": "roof_09", "roof_dark": "grey_roof_tiles_02", "plaster": "painted_plaster_wall", "concrete": "dirty_concrete",
+    "bricks": "red_brick_03", "asphalt": "asphalt_02",
+    "roof_dark": "grey_roof_tiles_02", "plaster": "painted_plaster_wall", "concrete": "dirty_concrete",
     "concrete_wall": "cracked_concrete_wall", "gravel": "gravel_concrete_03", "corrugated": "rusty_corrugated_iron",
-    "planks": "weathered_brown_planks", "dirt": "dirt", "grass": "grass_ground",
+    "planks": "weathered_brown_planks", "dirt": "dirt",
+    # mall interior
+    "mall_floor": "marble_01", "shop_floor": "laminate_floor_02", "wood_fine": "fine_grained_wood",
+    "bay_floor": "concrete_floor_worn_001", "denim": "denim_fabric", "leather": "leather_white", "metal_plate": "metal_plate",
 }
+# HD texture pack: the surfaces you look at most get 4K maps, everything else 2K
+PH_4K = {"mall_floor", "plaster", "bricks", "shop_floor", "concrete"}
 PH_MAPS = {"Diffuse": "albedo.jpg", "nor_gl": "normal.jpg", "Rough": "roughness.jpg", "AO": "ao.jpg"}
 
 HDRI = "kloofendal_48d_partly_cloudy_puresky"
 MODELS = ["concrete_road_barrier", "barrel_03", "old_military_crate", "wooden_crate_01", "ammo_box",
           "metal_jerrycan_green", "street_lamp_01", "utility_box_01", "wooden_military_crate", "service_pistol",
-          "modular_chainlink_fence", "covered_car", "plastic_crate_01", "bolt_action_rifle_7_62",
-          # clutter & vegetation for the realistic look
-          "shrub_02", "shrub_03", "shrub_04", "grass_medium_01", "grass_medium_02", "fern_02", "nettle_plant", "weed_plant_02",
-          "trashbag", "metal_trash_can", "cardboard_box_01", "cement_bag", "old_tyre", "plastic_crate_02", "street_lamp_02",
-          "modular_street_seating", "planter_box_01", "planter_box_02", "potted_plant_02", "potted_plant_04",
-          "outdoor_table_chair_set_01", "plastic_monobloc_chair_01", "power_box_01", "utility_box_02", "rollershutter_door",
-          "rollershutter_window_01", "portable_generator", "wooden_crate_02", "compost_bags", "painted_wooden_bench", "tree_stump_01", "metal_toolbox"]
+          "covered_car", "plastic_crate_01", "bolt_action_rifle_7_62",
+          # clutter
+          "trashbag", "metal_trash_can", "cardboard_box_01", "cement_bag", "plastic_crate_02",
+          "potted_plant_02", "potted_plant_04",
+          "plastic_monobloc_chair_01", "rollershutter_door",
+          "portable_generator", "wooden_crate_02", "painted_wooden_bench", "metal_toolbox",
+          # mall furniture and shop fittings
+          "Sofa_01", "ArmChair_01", "modern_arm_chair_01", "modern_coffee_table_01", "CashRegister_01", "WetFloorSign_01",
+          "painted_wooden_shelves", "painted_wooden_cabinet", "metal_office_desk", "Television_01", "korean_fire_extinguisher_01",
+          "hand_truck", "industrial_storage_cart", "plastic_crate_03", "planter_box_03", "metal_tool_chest", "Shelf_01",
+          "side_table_01", "round_wooden_table_01", "drawer_cabinet"]
 
 
 def get(url):
@@ -83,7 +88,7 @@ def ph_textures():
     for name, pid in PH_TEXTURES.items():
         out = os.path.join(ROOT, "assets", "textures", name)
         marker = os.path.join(out, "SOURCE")
-        if os.path.exists(marker) and open(marker).read().strip() == "polyhaven:" + pid:
+        if os.path.exists(marker) and open(marker).read().strip() == "polyhaven:" + pid + ("@4k" if name in PH_4K else ""):
             continue
         print("texture", name, "<- polyhaven", pid)
         files = json.loads(get(f"https://api.polyhaven.com/files/{pid}"))
@@ -91,11 +96,12 @@ def ph_textures():
         for f in os.listdir(out):
             os.remove(os.path.join(out, f))
         for key, dst in PH_MAPS.items():
-            if key in files and "2k" in files[key]:
+            res = "4k" if name in PH_4K else "2k"
+            if key in files and res in files[key]:
                 with open(os.path.join(out, dst), "wb") as fh:
-                    fh.write(get(files[key]["2k"]["jpg"]["url"]))
+                    fh.write(get(files[key][res]["jpg"]["url"]))
         with open(marker, "w") as fh:
-            fh.write("polyhaven:" + pid)
+            fh.write("polyhaven:" + pid + ("@4k" if name in PH_4K else ""))
 
 
 def hdri():

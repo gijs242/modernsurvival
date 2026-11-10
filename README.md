@@ -1,32 +1,33 @@
 # Modern Survival
 
 A wave-based survival shooter inspired by the *Survival* mode of classic modern military shooters, built in **Godot 4.7**.
-Defend **Winkelcentrum De Liekeblom** in Leek (NL) — a to-scale model of the real shopping centre and the streets around it,
-built from open government and OpenStreetMap data — or the original industrial yard. Earn cash for kills, combos and
+Defend a **shopping mall** — a to-scale model of a real Dutch shopping centre built from open government and
+OpenStreetMap data — or the original industrial yard. Earn cash for kills, combos and
 surviving waves, and spend it at the **Armory** (inside the vacant shop unit in the mall) with four counters:
 Weapons, Gunsmith (attachments), Equipment and Air Support. New gear unlocks every few waves.
 
 **Maps**
-- **De Liekeblom (Leek)** — real building footprint, corridors, entrances and shop units (BAG + OpenStreetMap), real 3D shapes
-  of every surrounding building (3D BAG), the glass-roofed main hall with its white space frame, café terrace and flower stall,
-  and the street around it. The playable area is the mall plus a 14 m strip of street (marked by concrete road
-  barriers); enemies come in through the four entrances. Beyond it the surrounding streets and the rest of Leek
-  (~4,500 buildings with measured roof heights, every street, the canals, parks, woods and fields in a 2.5 km square)
-  are scenery — accurate in layout and height, but cheap to render and not playable.
+- **Mall** — real building footprint, corridors, entrances and shop units (BAG + OpenStreetMap), the real 3D shape
+  of the building (3D BAG), and the glass-roofed main hall with its white space frame, café terrace and flower stall.
+  The whole map is indoors: every shop is stocked for its trade (bookcases, clothes racks and mannequins, jewellery
+  cases, phone tables, photo easels, supermarket aisles with fridges, produce and trolleys), and the corridors and hall
+  have planters, kiosks, benches, vending machines, lounge seating and improvised barricades for cover. Enemies come
+  in through the four entrances, each opening onto a walled loading bay where they (and the troop helicopter) arrive.
 - **Industrial Yard** — the original walled yard.
 
 - **Singleplayer**, **co-op (up to 4)** as a listen server, or a **dedicated headless server** on your own hardware.
-- Realistic rendering: physically based materials (CC0 scans from ambientCG), HDRI sky lighting (Poly Haven),
-  SDFGI global illumination, SSAO/SSIL, volumetric fog, soft cascaded shadows, AgX tonemapping and a colour grade.
+- Realistic rendering: physically based materials (CC0 photo scans from Poly Haven, 4K on the floors and walls you
+  see most), scanned furniture models, HDRI sky lighting, SDFGI global illumination, SSAO/SSIL, screen-space
+  reflections on the polished floors (High and Ultra), volumetric fog, soft cascaded shadows, AgX tonemapping, and a
+  ReShade-style finishing pass (contrast-adaptive sharpening, colour grade, subtle vignette / chromatic aberration /
+  film grain — switch it off under *Post-processing* in the menu).
 - Enemies that fight back smartly: they take cover behind low walls and corners and pop out to shoot, flank
-  through side streets and corridors, and lob grenades at anyone who camps. Snipers paint you with a red laser
+  through corridors and shops, and lob grenades at anyone who camps. Snipers paint you with a red laser
   before every shot, riot shields soak frontal fire, grenadiers, attack dogs, Juggernauts, and from wave 8 a troop
   helicopter with a door gunner that you can shoot down.
 - A run moves from afternoon to dusk by wave 10. Special waves every few rounds — night (with a power cut in the mall:
   buy night vision), smoke, an all-out rush, sniper alley — and endless-mode modifiers after wave 20 (armour plating,
   enemies that explode). Between waves you hear the convoy pull up where the next attack will come from.
-- An exterior steel staircase on De Liekeblom leads up to the flat mall roof and a sandbagged sniper nest over
-  the street (enemies can follow you up).
 - Difficulty (Recruit / Regular / Veteran), best wave and score per map and difficulty, and an end-of-run summary
   (score, accuracy, headshot rate, favourite weapon, best streak, time).
 - Shop windows shatter, lights can be shot out, bullets punch through glass, wood and thin metal. Tactical reloads
@@ -126,7 +127,7 @@ sudo ufw allow 7777/udp
    Click **Export Project** for each one you need; output goes to `build/`.
 3. Run the server build with `./ModernSurvivalServer.x86_64 --headless -- --server --port 7777`.
 
-Command-line options (after `--`): `--server`, `--port N`, `--map liekeblom|yard`, `--join ADDRESS`, `--name CALLSIGN`.
+Command-line options (after `--`): `--server`, `--port N`, `--map mall|yard`, `--join ADDRESS`, `--name CALLSIGN`.
 Joining players automatically load the map the server is running.
 
 ---
@@ -244,7 +245,9 @@ scripts/
   game.gd              game session 5/5: setup, networking, player commands, shop, client events & effects
   enemy.gd             enemy AI (cover, flanking, grenades, snipers, shields, reloads) and client puppets
   dog.gd               attack dog model
-  backdrop.gd          low-detail Leek town around the playable map
+  mall.gd              the Mall map: shell, shop fronts, hall, loading bays, shop fit-outs, cover
+  dressing.gd          instanced scanned props + floor grime decals for the Mall
+  postfx.gdshader      finishing pass (sharpening, grade, lens effects)
   player.gd            first-person controller, weapons, viewmodel, revive, designator
   map.gd               the yard: walls, armory, buildings, containers, cover, lighting, sky, navmesh
   hud.gd               HUD, hitmarkers, minimap, shop panel, scoreboard
@@ -291,9 +294,9 @@ Plays two minutes of scripted waves (buying, shooting, every support item) and r
   - AK-47, M1911, L85A1, G3A3, Mosin-Nagant, Dragunov — "Various Small Arms" by **Julius**, [OpenGameArt](https://opengameart.org/content/various-small-arms-assault-rifles-sniper-pistol), public domain
   - SCAR-H, M9 — "FPS Weapons" by **biglew**, CC-BY-SA 3.0
   - MG-M-250 — [OpenGameArt](https://opengameart.org/content/mg-m-250-light-machine-gun), CC-BY-SA 4.0
-- Map data (detailed map: `tools/build_liekeblom.py`; town backdrop: `tools/build_leek_backdrop.py`): BAG (Kadaster) via PDOK — CC0; 3D BAG (TU Delft / 3DGI) — CC BY 4.0; © OpenStreetMap contributors — ODbL.
-- Surface textures (brick, paving, roofs, plaster, concrete, asphalt, corrugated iron, planks, ground) and props/vegetation
-  (trees, shrubs, grass, bins, bags, crates, street furniture, shutters): [Poly Haven](https://polyhaven.com) — CC0.
+- Map data (`tools/build_mall.py`): BAG (Kadaster) via PDOK — CC0; 3D BAG (TU Delft / 3DGI) — CC BY 4.0; © OpenStreetMap contributors — ODbL.
+- Surface textures (marble, laminate, brick, plaster, concrete, asphalt, corrugated iron, planks, wood, leather, denim,
+  metal) and props (furniture, cash registers, shelving, TVs, bins, bags, crates, carts, shutters): [Poly Haven](https://polyhaven.com) — CC0.
 - HDRI sky and props (barriers, crates, barrels, lamp, car, jerrycan, ammo box, service pistol, etc.): [Poly Haven](https://polyhaven.com) — CC0.
 - Sounds (built with `tools/make_sounds.py`): gunshots — [The Free Firearm Sound Library](https://opengameart.org/content/the-free-firearm-sound-library), CC0;
   reloads — [Gun reload sounds](https://opengameart.org/content/gun-reload-sounds), CC0; clicks — [Equipment Clicks II](https://opengameart.org/content/equipment-clicks-ii), CC0;
