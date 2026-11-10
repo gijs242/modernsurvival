@@ -161,7 +161,7 @@ func _setup_local() -> void:
 	vm_view.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	var sv := SubViewport.new()
 	sv.transparent_bg = true
-	sv.msaa_3d = Viewport.MSAA_4X
+	sv.msaa_3d = Viewport.MSAA_4X if game.quality >= 1 else (Viewport.MSAA_2X if game.quality == 0 else Viewport.MSAA_DISABLED)
 	sv.use_taa = false
 	sv.handle_input_locally = false
 	sv.positional_shadow_atlas_size = 0

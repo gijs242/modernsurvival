@@ -36,7 +36,7 @@ func build(map: GameMap) -> void:
 	var t0 := Time.get_ticks_msec()
 	var steps := [_ground, _roads_and_areas, _buildings, _mall_shell, _mall_interior, _hall, _roof_access, _boundary, _gameplay_points,
 		func(): Dressing.new().run(m, d, body),
-		func(): if not Net.is_dedicated(): LeekBackdrop.new().build(m)]
+		func(): if not Net.is_dedicated(): LeekBackdrop.new().build(m, m.quality)]
 	var names := ["ground", "roads", "buildings", "shell", "interior", "hall", "roof", "boundary", "points", "dressing", "town backdrop"]
 	for i in steps.size():
 		steps[i].call()

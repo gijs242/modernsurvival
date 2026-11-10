@@ -85,14 +85,19 @@ func _register_inputs() -> void:
 
 
 func _apply_window_settings() -> void:
-	var q := int(Settings.get_val("quality", 2))
+	var q := int(Settings.get_val("quality", 2))       # -1 Performance, 0 Low, 1 Medium, 2 High, 3 Ultra
 	var vp := get_viewport()
-	vp.scaling_3d_mode = Viewport.SCALING_3D_MODE_FSR2 if q <= 1 else Viewport.SCALING_3D_MODE_BILINEAR
-	vp.scaling_3d_scale = 0.67 if q == 0 else 0.77 if q == 1 else 1.0
+	if q < 0:
+		vp.scaling_3d_mode = Viewport.SCALING_3D_MODE_FSR       # FSR 1: far cheaper than FSR 2
+		vp.scaling_3d_scale = 0.6
+	else:
+		vp.scaling_3d_mode = Viewport.SCALING_3D_MODE_FSR2 if q <= 1 else Viewport.SCALING_3D_MODE_BILINEAR
+		vp.scaling_3d_scale = 0.67 if q == 0 else 0.77 if q == 1 else 1.0
 	vp.msaa_3d = Viewport.MSAA_DISABLED if q <= 1 else Viewport.MSAA_2X
 	vp.use_taa = q == 3
 	vp.screen_space_aa = Viewport.SCREEN_SPACE_AA_FXAA if q <= 1 else Viewport.SCREEN_SPACE_AA_DISABLED
-	RenderingServer.directional_shadow_atlas_set_size(8192 if q >= 2 else 4096, true)
+	vp.mesh_lod_threshold = 4.0 if q < 0 else 1.0
+	RenderingServer.directional_shadow_atlas_set_size(8192 if q >= 2 else (4096 if q >= 0 else 2048), true)
 
 
 # ======================================================================= UI building
@@ -241,10 +246,10 @@ func _build_menu() -> void:
 	best_lbl = _lbl(v, "", 15, Color(0.95, 0.8, 0.45))
 	_refresh_best()
 	quality_opt = OptionButton.new()
-	for q in ["Low", "Medium", "High", "Ultra"]:
+	for q in ["Performance (weak PCs / laptops)", "Low", "Medium", "High", "Ultra"]:
 		quality_opt.add_item(q)
-	quality_opt.selected = int(Settings.get_val("quality", 2))
-	quality_opt.item_selected.connect(func(i): Settings.set_val("quality", i); _apply_window_settings())
+	quality_opt.selected = int(Settings.get_val("quality", 2)) + 1
+	quality_opt.item_selected.connect(func(i): Settings.set_val("quality", i - 1); _apply_window_settings())
 	_row(v, "Graphics", quality_opt)
 	_row(v, "Mouse sensitivity", _slider("sens", 0.2, 3.0, 0.05, 1.0))
 	_row(v, "Field of view", _slider("fov", 60, 100, 1, 78))
@@ -768,7 +773,10 @@ func _capture(name: String) -> void:
 	DirAccess.make_dir_recursive_absolute(dir)
 	var img := get_viewport().get_texture().get_image()
 	img.save_png("%s/%s.png" % [dir, name])
-	print("[shots] saved %s" % name)
+	print("[shots] saved %s  (draw calls %d, objects %d, primitives %d)" % [name,
+		RenderingServer.get_rendering_info(RenderingServer.RENDERING_INFO_TOTAL_DRAW_CALLS_IN_FRAME),
+		RenderingServer.get_rendering_info(RenderingServer.RENDERING_INFO_TOTAL_OBJECTS_IN_FRAME),
+		RenderingServer.get_rendering_info(RenderingServer.RENDERING_INFO_TOTAL_PRIMITIVES_IN_FRAME)])
 
 
 # ======================================================================= headless self-test

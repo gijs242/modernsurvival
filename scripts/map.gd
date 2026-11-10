@@ -130,9 +130,14 @@ func _layout() -> void:
 		_box("lamp", l[0], l[1], 0.3, 0.3, 6.2)
 
 
-func build(is_server: bool, quality: int, id := "yard") -> void:
+var quality := 2
+
+func build(is_server: bool, p_quality: int, id := "yard") -> void:
 	map_id = id
+	quality = p_quality
 	_build_environment(quality)
+	if quality < 0:
+		get_tree().node_added.connect(_cheap_lights)
 	if id == "liekeblom":
 		static_root = Node3D.new()
 		static_root.name = "Static"
@@ -274,7 +279,10 @@ void sky() {
 	sun.shadow_normal_bias = 1.2
 	sun.shadow_blur = 1.2
 	sun.directional_shadow_mode = DirectionalLight3D.SHADOW_PARALLEL_4_SPLITS
-	sun.directional_shadow_max_distance = 140.0 if quality >= 2 else 90.0
+	sun.directional_shadow_max_distance = 140.0 if quality >= 2 else (90.0 if quality >= 0 else 55.0)
+	if quality < 0:
+		sun.directional_shadow_mode = DirectionalLight3D.SHADOW_PARALLEL_2_SPLITS
+		env.fog_aerial_perspective = 0.0
 	sun.light_volumetric_fog_energy = 1.0
 	add_child(sun)
 	sun.look_at_from_position(SUN_DIR * 100.0, Vector3.ZERO, Vector3.UP)
@@ -733,6 +741,12 @@ func _bake_nav() -> void:
 	nm.filter_baking_aabb = AABB(Vector3(nb.position.x, -1, nb.position.y), Vector3(nb.size.x, 16, nb.size.y))
 	nav_region.navigation_mesh = nm
 	nav_region.bake_navigation_mesh(false)
+
+
+## Performance preset: no shadow-casting point / spot lights anywhere.
+func _cheap_lights(n: Node) -> void:
+	if n is OmniLight3D or n is SpotLight3D:
+		(n as Light3D).shadow_enabled = false
 
 
 # ---------------------------------------------------------------- time of day

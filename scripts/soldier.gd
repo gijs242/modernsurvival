@@ -285,8 +285,75 @@ func _build() -> void:
 	_make_pivot()
 	if style == "shield":
 		_build_shield(torso)
+	_merge_parts(self)
 	for mi in find_children("*", "MeshInstance3D", true, false):
 		(mi as MeshInstance3D).cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
+
+
+static var _pm: StandardMaterial3D
+static func _plain_mat() -> StandardMaterial3D:
+	if _pm == null:
+		_pm = StandardMaterial3D.new()
+		_pm.vertex_color_use_as_albedo = true
+		_pm.roughness = 0.75
+	return _pm
+
+
+static func _plain(m: Material) -> bool:
+	var sm := m as StandardMaterial3D
+	return sm != null and sm.albedo_texture == null and sm.normal_texture == null and not sm.emission_enabled \
+		and sm.transparency == BaseMaterial3D.TRANSPARENCY_DISABLED and sm.metallic < 0.5
+
+
+## ~60 little meshes per soldier cost ~60 draw calls (more with shadows). Each body segment's pieces that share
+## a material are baked into one mesh, so a soldier draws in ~15 calls. The gun is left alone (animated parts).
+func _merge_parts(node: Node) -> void:
+	if node == gun:
+		return
+	var groups := {}
+	for c in node.get_children():
+		if c is MeshInstance3D and c.get_child_count() == 0 and (c as MeshInstance3D).material_override:
+			var mi := c as MeshInstance3D
+			var key: Variant = mi.material_override
+			if _plain(mi.material_override):
+				key = "plain"                     # untextured colours: one vertex-coloured material per segment
+			if not groups.has(key):
+				groups[key] = []
+			groups[key].append(mi)
+	for key in groups:
+		var list: Array = groups[key]
+		if list.size() < 2:
+			continue
+		var st := SurfaceTool.new()
+		st.begin(Mesh.PRIMITIVE_TRIANGLES)
+		for mi in list:
+			var m: Mesh = (mi as MeshInstance3D).mesh
+			var xf: Transform3D = (mi as MeshInstance3D).transform
+			var col: Color = (mi.material_override as StandardMaterial3D).albedo_color if key is String else Color.WHITE
+			var arr := m.surface_get_arrays(0)
+			var verts: PackedVector3Array = arr[Mesh.ARRAY_VERTEX]
+			var norms: PackedVector3Array = arr[Mesh.ARRAY_NORMAL]
+			var uvs = arr[Mesh.ARRAY_TEX_UV]
+			var idx = arr[Mesh.ARRAY_INDEX]
+			var nb := xf.basis.inverse().transposed()
+			var order: PackedInt32Array = idx if idx != null and (idx as PackedInt32Array).size() > 0 else PackedInt32Array(range(verts.size()))
+			for i in order:
+				st.set_color(col)
+				if norms.size() > i:
+					st.set_normal((nb * norms[i]).normalized())
+				if uvs != null and (uvs as PackedVector2Array).size() > i:
+					st.set_uv(uvs[i])
+				st.add_vertex(xf * verts[i])
+		var merged := MeshInstance3D.new()
+		merged.mesh = st.commit()
+		merged.material_override = _plain_mat() if key is String else key
+		node.add_child(merged)
+		for mi in list:
+			node.remove_child(mi)
+			mi.free()
+	for c in node.get_children():
+		if not (c is MeshInstance3D):
+			_merge_parts(c)
 
 
 ## Arms and gun hang off one pivot at the shoulders, so lowering / raising / tilting the weapon moves the

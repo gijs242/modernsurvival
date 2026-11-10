@@ -285,6 +285,14 @@ func _physics_process(dt: float) -> void:
 
 func _move(dt: float, mv: Vector3, speed: float) -> void:
 	var pos := global_position
+	# far away and out of sight: just follow the navmesh path (it already avoids walls), no collision solve
+	if _far and not los and mode == ADVANCE and act_t <= 0.0 and is_on_floor() and stuck_t <= 0.0:
+		var step := mv.limit_length(1.0) * speed
+		moving = step.length() > 0.05
+		if moving:
+			_face(step.normalized(), dt, 10.0)
+		global_position += Vector3(step.x, 0, step.z) * dt
+		return
 	# separation from other enemies
 	for o in game.enemy_list():
 		if o == self:
@@ -315,7 +323,7 @@ func _move(dt: float, mv: Vector3, speed: float) -> void:
 func _path_to(goal: Vector3, dt: float) -> void:
 	repath_t -= dt
 	if repath_t <= 0.0:
-		repath_t = 0.4
+		repath_t = 1.2 if _far and not los else 0.4       # far away the target barely moves relative to us
 		agent.target_position = goal
 
 

@@ -49,7 +49,8 @@ Weapons, Gunsmith (attachments), Equipment and Air Support. New gear unlocks eve
    The first open imports all textures and models; this takes 1–3 minutes. Later opens are instant.
 4. Press **F5** (or the ▶ button top-right) to play.
 5. In the menu choose **Singleplayer**, or **Host Co-op** / **Join** for multiplayer. Pick a graphics preset that suits
-   your PC (*Ultra* adds TAA + screen-space reflections, *Low* uses FSR upscaling for weaker GPUs).
+   your PC (*Ultra* adds TAA + screen-space reflections, *Low* uses FSR upscaling for weaker GPUs, *Performance*
+   is for laptops / integrated graphics: 60% render scale with FSR 1, short shadows, no light shadows).
 
 **Controls**
 
