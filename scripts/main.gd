@@ -662,7 +662,21 @@ func _liekeblom_poses() -> Array:
 		[2.5, st.pos + f * 4.4, atan2(f.x, f.z), -0.05, "armory", false, "m1911"],
 		[3.0, ext, atan2(to_mall.x, to_mall.z), 0.06, "street", false, "g3a3"],
 		[3.5, ext, atan2(to_mall.x, to_mall.z) + 2.2, 0.03, "street2", false, "mg250"],
-	]
+	] + _roof_poses()
+
+
+func _roof_poses() -> Array:
+	if not game.map.has_meta("roof_stairs"):
+		return []
+	var b: Vector3 = game.map.get_meta("roof_stairs")
+	var t: Vector3 = game.map.get_meta("roof_top")
+	var nest: Vector3 = game.map.get_meta("roof_nest")
+	var mid := (b + Vector3(t.x, 0, t.z)) * 0.5
+	var out := Vector3(mid.x - nest.x, 0, mid.z - nest.z).normalized()
+	var cam := mid + out * 9.0 + Vector3(-out.z, 0, out.x) * 3.0
+	var look := mid - cam
+	return [[4.0, cam, atan2(-look.x, -look.z), 0.12, "roof_stairs", false, "ak47"],
+		[4.5, nest, atan2(-out.x, -out.z), -0.08, "roof_nest", false, "svd"]]
 
 
 func _shots(dt: float) -> void:
@@ -991,5 +1005,41 @@ func _selftest(dt: float) -> void:
 			if _st_t >= _st_next:
 				_st_check("ACOG switches to a magnified scope view", lp.scope_view(), "zoom=%.1f" % lp.ws().zoom)
 				lp.force_ads = -1.0
+				_st_step = 16
+				if game.map.has_meta("roof_stairs"):
+					# walk a body with the player's capsule up the roof stairs (headless runs can't send movement input)
+					var b: Vector3 = game.map.get_meta("roof_stairs")
+					var t: Vector3 = game.map.get_meta("roof_top")
+					var walker := CharacterBody3D.new()
+					walker.collision_mask = Defs.L_WORLD
+					walker.floor_snap_length = 0.35
+					walker.floor_max_angle = deg_to_rad(50)
+					var cs := CollisionShape3D.new()
+					var cap := CapsuleShape3D.new()
+					cap.radius = 0.36
+					cap.height = 1.8
+					cs.shape = cap
+					cs.position.y = 0.9
+					walker.add_child(cs)
+					var gs := GDScript.new()
+					gs.source_code = "extends CharacterBody3D\nvar dir := Vector3.ZERO\nvar max_y := 0.0\nfunc _physics_process(dt):\n\tmax_y = max(max_y, global_position.y)\n\tvelocity.x = dir.x * 4.0\n\tvelocity.z = dir.z * 4.0\n\tvelocity.y = 0.0 if is_on_floor() else velocity.y - 20.0 * dt\n\tmove_and_slide()\n"
+					gs.reload()
+					walker.set_script(gs)
+					game.add_child(walker)
+					var up := Vector3(t.x - b.x, 0, t.z - b.z).normalized()
+					walker.global_position = b - up * 1.0 + Vector3(0, 0.05, 0)
+					walker.set("dir", up)
+					_st_body = null
+					set_meta("walker", walker)
+				_st_next = _st_t + 4.0
+		16:
+			if _st_t >= _st_next:
+				if game.map.has_meta("roof_stairs"):
+					var walker: CharacterBody3D = get_meta("walker")
+					_st_check("player can climb the roof stairs", float(walker.get("max_y")) > 3.8, "highest y=%.2f" % float(walker.get("max_y")))
+					var nav := game.get_world_3d().navigation_map
+					var path := NavigationServer3D.map_get_path(nav, game.map.get_meta("roof_stairs"), game.map.get_meta("roof_nest"), true)
+					var end: Vector3 = path[path.size() - 1] if path.size() > 0 else Vector3.ZERO
+					_st_check("enemies can path up to the roof nest", path.size() > 0 and end.distance_to(game.map.get_meta("roof_nest")) < 2.0 and end.y > 3.0, "end=%s" % end)
 				print("[selftest] DONE failures=%d" % _st_fail)
 				get_tree().quit(_st_fail)

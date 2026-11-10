@@ -24,6 +24,10 @@ Weapons, Gunsmith (attachments), Equipment and Air Support. New gear unlocks eve
 - A run moves from afternoon to dusk by wave 10. Special waves every few rounds — night (with a power cut in the mall:
   buy night vision), smoke, an all-out rush, sniper alley — and endless-mode modifiers after wave 20 (armour plating,
   enemies that explode). Between waves you hear the convoy pull up where the next attack will come from.
+- An exterior steel staircase on De Liekeblom leads up to the flat mall roof and a sandbagged sniper nest over
+  the street (enemies can follow you up).
+- Difficulty (Recruit / Regular / Veteran), best wave and score per map and difficulty, and an end-of-run summary
+  (score, accuracy, headshot rate, favourite weapon, best streak, time).
 - Shop windows shatter, lights can be shot out, bullets punch through glass, wood and thin metal. Tactical reloads
   keep a round chambered, hold your breath on scopes, inspect your weapon. Reverb changes indoors / outdoors and
   footsteps change with the floor.
@@ -230,14 +234,20 @@ scenes/main.tscn       entry scene
 scripts/
   main.gd              menus, session start (SP / host / join / dedicated), pause, game over
   net.gd               ENet networking + command-line args (autoload "Net")
-  game.gd              authoritative game: waves, economy, shop, support, events & snapshots
-  enemy.gd             enemy AI (navmesh, line of sight, burst fire, rushers) and client puppets
+  game_state.gd        game session 1/5: shared state and helpers
+  game_combat.gd       game session 2/5: damage, explosions, breakable glass / lights / power
+  game_waves.gd        game session 3/5: waves, spawning, server tick, support items, enemy helicopter
+  game_sync.gd         game session 4/5: snapshots (server -> every peer)
+  game.gd              game session 5/5: setup, networking, player commands, shop, client events & effects
+  enemy.gd             enemy AI (cover, flanking, grenades, snipers, shields, reloads) and client puppets
+  dog.gd               attack dog model
+  backdrop.gd          low-detail Leek town around the playable map
   player.gd            first-person controller, weapons, viewmodel, revive, designator
   map.gd               the yard: walls, armory, buildings, containers, cover, lighting, sky, navmesh
   hud.gd               HUD, hitmarkers, minimap, shop panel, scoreboard
   effects.gd           particles, tracers, decals, explosions, casings
   sfx.gd               procedural sound synthesis + overrides (autoload "Sfx")
-  soldier.gd           soldier models + animation (procedural or Mixamo)
+  soldier.gd           soldier models + procedural animation (walk/run/strafe, aim, reload, throw, flinch, ragdoll)
   weapon_model.gd      weapon models (procedural or custom .glb)
   props.gd             grenades, rockets, claymores, sentries, aircraft
   defs.gd              all tunable game data (autoload "Defs")

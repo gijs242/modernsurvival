@@ -34,10 +34,10 @@ func build(map: GameMap) -> void:
 	body.set_meta("surface", "concrete")
 	m.static_root.add_child(body)
 	var t0 := Time.get_ticks_msec()
-	var steps := [_ground, _roads_and_areas, _buildings, _mall_shell, _mall_interior, _hall, _boundary, _gameplay_points,
+	var steps := [_ground, _roads_and_areas, _buildings, _mall_shell, _mall_interior, _hall, _roof_access, _boundary, _gameplay_points,
 		func(): Dressing.new().run(m, d, body),
 		func(): if not Net.is_dedicated(): LeekBackdrop.new().build(m)]
-	var names := ["ground", "roads", "buildings", "shell", "interior", "hall", "boundary", "points", "dressing", "town backdrop"]
+	var names := ["ground", "roads", "buildings", "shell", "interior", "hall", "roof", "boundary", "points", "dressing", "town backdrop"]
 	for i in steps.size():
 		steps[i].call()
 		if OS.is_stdout_verbose() or Net.args.has("buildlog"):
@@ -642,6 +642,155 @@ func _hall() -> void:
 	for p in d.mall.pois:
 		if p.kind == "bench":
 			_box(wood, Vector3(1.8, 0.45, 0.5), _v(p.pos), u_axis, true)
+
+
+# ------------------------------------------------------------------ roof access
+## An exterior steel staircase up to the mall's flat roof (~4 m, from 3D BAG), placed automatically next to the
+## biggest flat roof section that reaches an outside wall, with a sandbagged sniper nest up top. The stairs have a
+## ramp collider underneath, so players and enemies (navmesh) can both use them.
+func _roof_access() -> void:
+	var mall: Dictionary = {}
+	for b in d.buildings:
+		if b.mall:
+			mall = b
+	if mall.is_empty():
+		return
+	var fp := PackedVector2Array()
+	for p in d.mall.footprint:
+		fp.append(Vector2(p[0], p[1]))
+	var rf: Array = mall.roof_flat
+	var best := {}
+	var best_score := -1.0
+	for t in range(0, rf.size(), 9):
+		var a := Vector3(rf[t], rf[t + 1], rf[t + 2])
+		var b := Vector3(rf[t + 3], rf[t + 4], rf[t + 5])
+		var c := Vector3(rf[t + 6], rf[t + 7], rf[t + 8])
+		var hy := (a.y + b.y + c.y) / 3.0
+		if hy < 3.5 or hy > 4.6 or absf(a.y - b.y) > 0.15 or absf(a.y - c.y) > 0.15:
+			continue
+		var area := (b - a).cross(c - a).length() * 0.5
+		if area < 6.0:
+			continue
+		var cen := (a + b + c) / 3.0
+		var c2 := Vector2(cen.x, cen.z)
+		for i in fp.size():
+			var p0: Vector2 = fp[i]
+			var p1: Vector2 = fp[(i + 1) % fp.size()]
+			if p0.distance_to(p1) < 10.0:
+				continue
+			var q := Geometry2D.get_closest_point_to_segment(c2, p0, p1)
+			var dist := q.distance_to(c2)
+			if dist > 4.0:
+				continue
+			var near_door := false                         # keep the stairs (≈7 m along the wall) clear of entrances
+			for en in d.mall.entrances:
+				if Vector2(en[0], en[1]).distance_to(q) < 10.0:
+					near_door = true
+			if near_door:
+				continue
+			var score := area - dist * 2.0
+			if score > best_score:
+				best_score = score
+				best = {"h": hy, "c": cen, "p0": p0, "p1": p1, "q": q}
+	if best.is_empty():
+		return
+	var h: float = best.h
+	var u2: Vector2 = ((best.p1 as Vector2) - (best.p0 as Vector2)).normalized()
+	var n2 := Vector2(-u2.y, u2.x)
+	var mid: Vector2 = ((best.p0 as Vector2) + (best.p1 as Vector2)) * 0.5
+	if Geometry2D.is_point_in_polygon(mid + n2 * 0.6, fp):
+		n2 = -n2                                           # outward
+	var u := Vector3(u2.x, 0, u2.y)
+	var n := Vector3(n2.x, 0, n2.y)
+	var q3 := Vector3(best.q.x, 0, best.q.y)
+	var run := h / tan(deg_to_rad(33.0))
+	# run along the wall in whichever direction has room
+	var room_neg: float = (best.q as Vector2).distance_to(best.p0)
+	var dirv := -u if room_neg > run + 1.5 else u
+	var top := q3 + n * 1.3                                # top of the flight, 1.3 m off the wall
+	var bottom := top + dirv * run
+	var steel := Mat.pbr("painted_metal", Color(0.18, 0.2, 0.22), 0.55, 0.6)
+	var tread := Mat.pbr("painted_metal", Color(0.3, 0.3, 0.3), 0.7, 0.7)
+	# ramp collider (walkable slope) under the visual steps
+	var slope_len := sqrt(run * run + h * h)
+	var ramp_dir := ((top + Vector3(0, h, 0)) - bottom).normalized()
+	var rn := n.cross(ramp_dir).normalized()              # the ramp surface's normal
+	if rn.y < 0.0:
+		rn = -rn
+	_box_col(Vector3(1.8, 0.12, slope_len), Transform3D(Basis.looking_at(-ramp_dir, rn), (bottom + top + Vector3(0, h, 0)) * 0.5 - rn * 0.06))
+	var steps_n := ceili(h / 0.2)
+	for k in steps_n:
+		var f := (k + 0.5) / steps_n
+		var pos := bottom.lerp(top, f) + Vector3(0, h * f - 0.02, 0)
+		_box(tread, Vector3(1.8, 0.05, run / steps_n + 0.04), pos, dirv, false)
+	for sd in [-0.93, 0.93]:                               # stringers + hand rails
+		var off: Vector3 = n * sd
+		var a3: Vector3 = bottom + off
+		var b3: Vector3 = top + off + Vector3(0, h, 0)
+		var sm := BoxMesh.new()
+		sm.size = Vector3(0.05, 0.22, a3.distance_to(b3))
+		m._merge_add(steel, sm, Transform3D(Basis.looking_at((b3 - a3).normalized(), Vector3.UP), (a3 + b3) * 0.5))
+		var rm := BoxMesh.new()
+		rm.size = Vector3(0.04, 0.04, a3.distance_to(b3))
+		m._merge_add(steel, rm, Transform3D(Basis.looking_at((b3 - a3).normalized(), Vector3.UP), (a3 + b3) * 0.5 + Vector3(0, 0.95, 0)))
+		for k in 4:
+			var pp: Vector3 = a3.lerp(b3, (k + 0.5) / 4.0)
+			var post := BoxMesh.new()
+			post.size = Vector3(0.04, 0.95, 0.04)
+			m._merge_add(steel, post, Transform3D(Basis(), pp + Vector3(0, 0.47, 0)))
+	# landing that bridges over the parapet onto the roof
+	# continues past the top of the flight (so it doesn't overhang the last steps) and over the wall
+	var land := q3 + n * 0.6 - dirv * 1.05 + Vector3(0, h, 0)
+	_box(tread, Vector3(2.1, 0.1, 2.9), land - Vector3(0, 0.1, 0), n, true)
+	# steel walkway across the roof from the landing to the nest, ending in a platform (a clean walkable route
+	# over the roof's ridges and the interior walls poking through it)
+	# nest: on the flat roof just inside the edge, past the top of the stairs, looking out over the street
+	var nest: Vector3 = best.c
+	var on_roof := func(pt: Vector2) -> bool:
+		for t in range(0, rf.size(), 9):
+			if absf(rf[t + 1] - h) > 0.2 or absf(rf[t + 4] - h) > 0.2 or absf(rf[t + 7] - h) > 0.2:
+				continue
+			if Geometry2D.point_is_inside_triangle(pt, Vector2(rf[t], rf[t + 2]), Vector2(rf[t + 3], rf[t + 5]), Vector2(rf[t + 6], rf[t + 8])):
+				return true
+		return false
+	var nest_found := false
+	for along in [3.5, 4.5, 2.8, 5.5]:
+		for inward in [2.6, 3.2, 2.2]:
+			var cand: Vector3 = q3 - dirv * along - n * inward
+			var ok := true
+			for corner in [Vector3(1, 0, 1), Vector3(1, 0, -1), Vector3(-1, 0, 1), Vector3(-1, 0, -1), Vector3.ZERO]:
+				var cp: Vector3 = cand + u * corner.x * 2.0 + n * corner.z * 2.0
+				if not on_roof.call(Vector2(cp.x, cp.z)):
+					ok = false
+			if ok:
+				nest = Vector3(cand.x, h, cand.z)
+				nest_found = true
+				break
+		if nest_found:
+			break
+	var grate := Mat.pbr("painted_metal", Color(0.26, 0.27, 0.28), 0.6, 0.7)
+	var w_from := q3 - n * 0.6 - dirv * 1.05 + Vector3(0, h, 0)
+	var w_to := Vector3(nest.x, h, nest.z)
+	var wl := Vector2(w_to.x - w_from.x, w_to.z - w_from.z).length()
+	if wl > 0.5:
+		var wdir := Vector3(w_to.x - w_from.x, 0, w_to.z - w_from.z).normalized()
+		_box(grate, Vector3(2.0, 0.12, wl + 1.0), (w_from + w_to) * 0.5 + Vector3(0, -0.02, 0), wdir, true)
+	_box(grate, Vector3(4.6, 0.12, 4.6), w_to + Vector3(0, -0.02, 0), n, true)
+	nest = w_to + Vector3(0, 0.1, 0)
+	# sniper nest: sandbags along the roof edge facing out, an ammo crate
+	var bag := Mat.pbr("burlap", Color(0.62, 0.55, 0.4), 0.95)
+	var face := n if nest_found else Vector3(w_to.x - w_from.x, 0, w_to.z - w_from.z).normalized()   # the street (or away from the walkway)
+	var side := Vector3(-face.z, 0, face.x)
+	for k in range(-2, 3):
+		for lvl in 2:
+			_box(bag, Vector3(0.7, 0.32, 0.45), nest + face * 1.6 + side * (k * 0.68 - (0.5 if nest_found else 0.0)) + Vector3(0, lvl * 0.3 - 0.02, 0), face, lvl == 0)
+	_box_col(Vector3(3.4, 0.7, 0.5), Transform3D(Basis.looking_at(face, Vector3.UP), nest + face * 1.6 - side * (0.5 if nest_found else 0.0) + Vector3(0, 0.33, 0)))
+	_box(Mat.pbr("planks", Color(0.5, 0.45, 0.32)), Vector3(0.8, 0.45, 0.5), nest - face * 0.8 + side * 1.2, side, true)
+	m.set_meta("roof_nest", nest)
+	m.set_meta("roof_stairs", bottom)
+	m.set_meta("roof_top", top + Vector3(0, h, 0))
+	if OS.is_stdout_verbose() or Net.args.has("buildlog"):
+		print("[map] roof access: stairs at %s up to %.1f m, nest at %s" % [bottom, h, nest])
 
 
 # ------------------------------------------------------------------ gameplay
