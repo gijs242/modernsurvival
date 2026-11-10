@@ -120,7 +120,8 @@ func _flush() -> void:
 				mm.set_instance_transform(i, xfs[i] * lxf)
 			var mmi := MultiMeshInstance3D.new()
 			mmi.multimesh = mm
-			mmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
+			var small: bool = name.begins_with("grass") or name.begins_with("weed") or name.begins_with("fern") or name.begins_with("nettle")
+			mmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF if small else GeometryInstance3D.SHADOW_CASTING_SETTING_ON
 			if name.begins_with("tree:") or name.begins_with("grass") or name.begins_with("weed") or name.begins_with("fern") or name.begins_with("nettle"):
 				mmi.visibility_range_end = 140.0 if name.begins_with("tree:") else 45.0
 				mmi.visibility_range_end_margin = 10.0

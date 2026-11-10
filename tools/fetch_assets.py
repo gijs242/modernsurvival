@@ -56,7 +56,7 @@ MODELS = ["concrete_road_barrier", "barrel_03", "old_military_crate", "wooden_cr
           "trashbag", "metal_trash_can", "cardboard_box_01", "cement_bag", "old_tyre", "plastic_crate_02", "street_lamp_02",
           "modular_street_seating", "planter_box_01", "planter_box_02", "potted_plant_02", "potted_plant_04",
           "outdoor_table_chair_set_01", "plastic_monobloc_chair_01", "power_box_01", "utility_box_02", "rollershutter_door",
-          "rollershutter_window_01", "portable_generator", "wooden_crate_02", "compost_bags", "painted_wooden_bench", "tree_stump_01"]
+          "rollershutter_window_01", "portable_generator", "wooden_crate_02", "compost_bags", "painted_wooden_bench", "tree_stump_01", "metal_toolbox"]
 
 
 def get(url):

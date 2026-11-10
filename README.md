@@ -1,9 +1,16 @@
 # Modern Survival
 
 A wave-based survival shooter inspired by the *Survival* mode of classic modern military shooters, built in **Godot 4.7**.
-Hold a walled industrial yard against ever-larger waves of hostiles, earn cash for kills, combos and surviving waves,
-and spend it at the **Armory** — a physical shop building on the north side of the map with three stations
-(Weapons, Equipment, Air Support). New gear unlocks every few waves.
+Defend **Winkelcentrum De Liekeblom** in Leek (NL) — a to-scale model of the real shopping centre and the streets around it,
+built from open government and OpenStreetMap data — or the original industrial yard. Earn cash for kills, combos and
+surviving waves, and spend it at the **Armory** (inside the vacant shop unit in the mall) with four counters:
+Weapons, Gunsmith (attachments), Equipment and Air Support. New gear unlocks every few waves.
+
+**Maps**
+- **De Liekeblom (Leek)** — real building footprint, corridors, entrances and shop units (BAG + OpenStreetMap), real 3D shapes
+  of every surrounding building (3D BAG), the glass-roofed main hall with its white space frame, café terrace and flower stall,
+  streets, parking, the canal, trees, street furniture and clutter.
+- **Industrial Yard** — the original walled yard.
 
 - **Singleplayer**, **co-op (up to 4)** as a listen server, or a **dedicated headless server** on your own hardware.
 - Realistic rendering: physically based materials (CC0 scans from ambientCG), HDRI sky lighting (Poly Haven),
@@ -94,7 +101,8 @@ sudo ufw allow 7777/udp
    Click **Export Project** for each one you need; output goes to `build/`.
 3. Run the server build with `./ModernSurvivalServer.x86_64 --headless -- --server --port 7777`.
 
-Command-line options (after `--`): `--server`, `--port N`, `--join ADDRESS`, `--name CALLSIGN`.
+Command-line options (after `--`): `--server`, `--port N`, `--map liekeblom|yard`, `--join ADDRESS`, `--name CALLSIGN`.
+Joining players automatically load the map the server is running.
 
 ---
 
@@ -107,17 +115,31 @@ Command-line options (after `--`): `--server`, `--port N`, `--join ADDRESS`, `--
 - **Downed** players get a pistol and 35 s to be revived (hold E next to them); a Self-Revive Kit gets you up after 5 s.
   The game ends when nobody is left standing. Dead players redeploy when the wave ends.
 
+**Weapons** (17): P38 pistol, M9, M1911, Mk II SMG (scoped), pump shotgun, M4 (holo), AK-47, L85A1, G3A3, SCAR-H (holo),
+Mosin-Nagant, bolt-action sniper (6x), Dragunov SVD (4x), M60, MG-M-250, RPG-7 — each tier hits harder, recoils less or holds more.
+
+**Attachments** (Gunsmith counter, fitted to the weapon you're holding): red dot, holographic sight, ACOG 4x, sniper scope 6x,
+compensator, suppressor (quiet, no muzzle flash), foregrip, laser, extended magazine. Iron sights are calibrated from each
+model's real front/rear sights, and every gun is tested to put its sight line exactly at the screen centre.
+
 **Unlock schedule** (unlocks after you *complete* the listed wave):
 
 | After wave | Weapons | Equipment | Air support |
 |---|---|---|---|
-| 0 | Wasp SMG $1000, Breacher 12G $1200 | Ammo $350, Frags $400 | — |
-| 2 | Ranger AR $2200 | Body Armor $800 | — |
-| 4 | — | Claymores $700, Self-Revive $1500 | Precision Airstrike $2000 |
-| 6 | Longbow DMR $3000 | Heavy Armor $2000, Sentry Gun $2500 | — |
-| 8 | Bulwark LMG $4500 | — | Gunship $4000 |
-| 10 | Ravager RL $5500 | — | — |
+| 0 | Mk II SMG $1000, Pump Shotgun $1200 | Ammo $350, Frags $400 | — |
+| 1 | M9 $700 | red dot, laser | — |
+| 2 | M4 Carbine $2200, M1911 $1300 | Body Armor $800, compensator, foregrip | — |
+| 3 | AK-47 $2600 | holo sight, extended mag | — |
+| 4 | Mosin-Nagant $2400 | Claymores $700, Self-Revive $1500, suppressor | Precision Airstrike $2000 |
+| 5 | L85A1 $3200 | ACOG 4x | — |
+| 6 | Bolt-Action Sniper $3000 | Heavy Armor $2000, Sentry Gun $2500 | — |
+| 7 | G3A3 $3800 | — | — |
+| 8 | M60 $4500 | sniper scope 6x | Gunship $4000 |
+| 9 | SCAR-H $5000 | — | — |
+| 10 | RPG-7 $5500 | — | — |
+| 11 | Dragunov SVD $5800 | — | — |
 | 12 | — | — | Carpet Bombing $6000 |
+| 13 | MG-M-250 $7000 | — | — |
 
 Tweak anything in `scripts/defs.gd` (weapon stats, prices, unlocks, enemy stats).
 
@@ -226,6 +248,12 @@ Plays two minutes of scripted waves (buying, shooting, every support item) and r
   - RPG-7 — by **lucian-pavel**, [OpenGameArt](https://opengameart.org/content/low-poly-rpg7), CC0
   - MK2 grenade — by **lonesomeducky**, [OpenGameArt](https://opengameart.org/content/mk2-grenade), CC0
   - Bolt-action sniper rifle and service pistol — [Poly Haven](https://polyhaven.com), CC0
+  - AK-47, M1911, L85A1, G3A3, Mosin-Nagant, Dragunov — "Various Small Arms" by **Julius**, [OpenGameArt](https://opengameart.org/content/various-small-arms-assault-rifles-sniper-pistol), public domain
+  - SCAR-H, M9 — "FPS Weapons" by **biglew**, CC-BY-SA 3.0
+  - MG-M-250 — [OpenGameArt](https://opengameart.org/content/mg-m-250-light-machine-gun), CC-BY-SA 4.0
+- Map data: BAG (Kadaster) via PDOK — CC0; 3D BAG (TU Delft / 3DGI) — CC BY 4.0; © OpenStreetMap contributors — ODbL.
+- Surface textures (brick, paving, roofs, plaster, concrete, asphalt, corrugated iron, planks, ground) and props/vegetation
+  (trees, shrubs, grass, bins, bags, crates, street furniture, shutters): [Poly Haven](https://polyhaven.com) — CC0.
 - HDRI sky and props (barriers, crates, barrels, lamp, car, jerrycan, ammo box, service pistol, etc.): [Poly Haven](https://polyhaven.com) — CC0.
 - Engine: [Godot Engine](https://godotengine.org) — MIT.
 - Everything else (code, procedural models, sounds) is part of this project.

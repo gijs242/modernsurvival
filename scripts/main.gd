@@ -708,8 +708,12 @@ func _selftest(dt: float) -> void:
 				_st_step = 9
 		9:
 			if _st_t > 4.6:
-				var tilt: float = abs(_st_body.rotation.x) if is_instance_valid(_st_body) else 0.0
-				_st_check("corpse falls over", tilt > 1.2, "tilt=%.2f rad" % tilt)
+				var chest: RigidBody3D = null
+				for c in game.enemies_root.get_children():
+					if c is RigidBody3D and String(c.name).begins_with("RD_chest"):
+						chest = c
+				var up := chest.global_transform.basis.y.normalized().dot(Vector3.UP) if chest else 1.0
+				_st_check("ragdoll falls over", chest != null and up < 0.6, "chest up-dot=%.2f, height=%.2f" % [up, chest.global_position.y if chest else -1.0])
 				_st_step = 10
 		10:
 			if _st_t > 17.0:
