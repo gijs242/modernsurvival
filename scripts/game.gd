@@ -54,6 +54,7 @@ var approach := -1           # index into map.spawns the next wave mostly comes 
 var convoy_sent := false
 var events: Array = []
 var snap_t := 0.0
+var _snap_n := 0
 
 # ---- client-side visuals for objects
 var obj_nodes := {}          # "kind:id" -> Node3D
@@ -79,9 +80,21 @@ func setup(p_quality: int, p_map := "yard") -> void:
 	objects_root = Node3D.new()
 	objects_root.name = "Objects"
 	add_child(objects_root)
+	_warm_up()
 	if is_server:
 		multiplayer.peer_disconnected.connect(_on_peer_left)
 		reset()
+
+
+## Build one of every enemy body (and its weapon) during the level load, so the first sniper or breacher
+## of a run doesn't stall the game for a few hundred ms while its model loads from disk.
+func _warm_up() -> void:
+	for t in Defs.ENEMIES:
+		var d: Dictionary = Defs.ENEMIES[t]
+		var m: Soldier = Dog.new() if d.get("dog", false) else Soldier.new()
+		m.setup(t, d.gun)
+		m.free()
+	Props.helicopter().free()
 
 
 # =========================================================================== networking
@@ -191,12 +204,31 @@ func _unlocked(item: Dictionary) -> bool:
 	return cleared >= item.after
 
 
+## Alive players / enemy list, built once per physics tick (every enemy asks for them every tick).
+var _alive_cache: Array = []
+var _alive_frame := -1
+var _enemy_list: Array = []
+var _enemy_frame := -1
+
+func enemy_list() -> Array:
+	var f := Engine.get_physics_frames()
+	if f != _enemy_frame:
+		_enemy_frame = f
+		_enemy_list = enemies.values()
+	return _enemy_list
+
+
 func _alive_players() -> Array:
+	var f := Engine.get_physics_frames()
+	if f == _alive_frame:
+		return _alive_cache
+	_alive_frame = f
 	var out := []
 	for id in P:
 		var p: Dictionary = P[id]
 		if not p.dead and not p.downed:
 			out.append(p)
+	_alive_cache = out
 	return out
 
 
@@ -1074,9 +1106,13 @@ func _snapshot() -> Dictionary:
 	var he := []
 	for id in helis:
 		he.append([id, helis[id].pos, helis[id].yaw, roundi(100.0 * helis[id].hp / helis[id].max)])
-	return {"wave": wave, "cleared": cleared, "state": state, "timer": ceili(timer), "left": enemies.size() + spawn_queue.size(),
+	_snap_n += 1
+	var extra := {}
+	if _snap_n % 20 == 0:          # full glass / light state once a second, for late joiners (changes go out as events)
+		extra = {"gb": glass_broken.keys(), "lo": lights_out.keys()}
+	return extra.merged({"wave": wave, "cleared": cleared, "state": state, "timer": ceili(timer), "left": enemies.size() + spawn_queue.size(),
 		"players": pl, "enemies": en, "proj": pr, "mines": mi, "turrets": tu, "drones": dr, "helis": he, "time": time,
-		"sp": special, "mods": modifiers, "gb": glass_broken.keys(), "lo": lights_out.keys(), "pw": power}
+		"sp": special, "mods": modifiers, "pw": power})
 
 
 func _apply_snapshot(s: Dictionary) -> void:

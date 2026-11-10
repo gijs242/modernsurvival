@@ -49,7 +49,10 @@ var to_cover_t := 0.0
 var aim_t := 0.0
 var aim_pid := -1
 var nade_cd := 0.0
-var hitboxes: Array = []   # [Area3D, base y]
+var hitboxes: Array = []   # [CollisionShape3D, base y]
+var _far := false
+var _last_mv := Vector3.ZERO
+var _last_speed := 0.0
 
 # puppet interpolation
 var buf: Array = []
@@ -183,6 +186,13 @@ func _process(dt: float) -> void:
 func _physics_process(dt: float) -> void:
 	if puppet or game == null:
 		return
+	# far away and out of sight: think every third tick (keep moving every tick)
+	var think := true
+	if not los and lost_t > 1.0 and mode == ADVANCE and _far:
+		think = (Engine.get_physics_frames() + id) % 3 == 0
+	if not think:
+		_move(dt, _last_mv, _last_speed)
+		return
 	var players := game._alive_players()
 	var tgt = null
 	var td := 1e9
@@ -200,6 +210,7 @@ func _physics_process(dt: float) -> void:
 		return
 	var pos := global_position
 	var tpos: Vector3 = tgt.pos
+	_far = td > 45.0
 	var eye := pos + Vector3(0, 1.45 * s, 0)
 	var teye := tpos + Vector3(0, 0.8 if tgt.cr else 1.35, 0)
 	var space := get_world_3d().direct_space_state
@@ -252,8 +263,15 @@ func _physics_process(dt: float) -> void:
 			elif engage and mode == ADVANCE:
 				speed *= 0.6
 		_maybe_grenade(tgt, td, eye)
+	_last_mv = mv
+	_last_speed = speed
+	_move(dt, mv, speed)
+
+
+func _move(dt: float, mv: Vector3, speed: float) -> void:
+	var pos := global_position
 	# separation from other enemies
-	for o in game.enemies.values():
+	for o in game.enemy_list():
 		if o == self:
 			continue
 		var d: Vector3 = pos - o.global_position

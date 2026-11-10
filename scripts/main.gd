@@ -540,7 +540,13 @@ func _update_browser(dt: float) -> void:
 		h.add_child(b)
 
 
+var _pf_sum := 0.0
+var _pf_n := 0
+
 func _process(dt: float) -> void:
+	if autotest_t > 0.0:
+		_pf_sum += Performance.get_monitor(Performance.TIME_PHYSICS_PROCESS)
+		_pf_n += 1
 	_update_browser(dt)
 	if Net.args.has("selftest"):
 		_selftest(dt)
@@ -726,6 +732,9 @@ func _autotest(dt: float) -> void:
 		var efr := 0
 		for pr in game.projectiles.values():
 			if pr.k == "efrag": efr += 1
+		print("[autotest] avg physics frame %.2f ms" % (_pf_sum / max(1, _pf_n) * 1000.0))
+		_pf_sum = 0.0
+		_pf_n = 0
 		print("[autotest] enemy grenades thrown=%d in_air=%d camp=%.0f" % [game.nades_thrown, efr, game.P.get(game.local_id, {}).get("camp_t", 0.0)])
 		print("[autotest] mix=%s helis=%d glass_broken=%d lights_out=%d power=%s special=%s" % [mix, game.helis.size(), game.glass_broken.size(), game.lights_out.size(), game.power, game.special])
 	if f % 300 == 0:

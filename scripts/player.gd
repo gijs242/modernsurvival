@@ -963,10 +963,9 @@ func _update_viewmodel(dt: float) -> void:
 		# turn the gun towards you to look along the left side, then roll it over to the right side
 		var k := 1.0 - inspect_t / INSPECT
 		var e := sin(clamp(k * 1.25, 0.0, 1.0) * PI)
-		var side := -1.0 if k < 0.5 else 1.0
 		var blend := smoothstep(0.35, 0.65, k)
 		pos += Vector3(-0.09, 0.04, 0.06) * e
-		rot += Vector3(0.15, lerpf(0.9, -0.5, blend), lerpf(0.55, -0.9, blend) * (1.0 if side < 0 else 1.0)) * e
+		rot += Vector3(0.15, lerpf(0.9, -0.5, blend), lerpf(0.55, -0.9, blend)) * e
 	var target := Transform3D(Basis.from_euler(rot), pos)
 	vm.transform = vm.transform.interpolate_with(target, min(1.0, dt * 22.0))
 	var gun_n: Node3D = vm.get_meta("gun")
