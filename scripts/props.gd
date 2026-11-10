@@ -125,3 +125,61 @@ static func gunship() -> Node3D:
 	var g := _aircraft(1.4)
 	g.scale = Vector3.ONE * 1.3
 	return g
+
+
+## Enemy transport helicopter (Huey-like silhouette): body, tail boom, skids, main + tail rotor and a
+## hitbox Area3D (meta "hitbox"; the game sets "heli_id" on it).
+static func helicopter() -> Node3D:
+	var g := Node3D.new()
+	var m := Mat.pbr("painted_metal", Color(0.24, 0.27, 0.2), 0.55, 0.5)
+	var dark := Mat.solid(Color(0.06, 0.06, 0.06), 0.5, 0.6)
+	var glass := Mat.solid(Color(0.05, 0.08, 0.1), 0.05, 0.9)
+	var body := SphereMesh.new()
+	body.radius = 1.0
+	body.height = 2.0
+	_mi(g, body, m, Vector3(0, 0, 0)).scale = Vector3(1.25, 1.15, 2.6)
+	_mi(g, _box(Vector3(2.0, 1.5, 2.6)), m, Vector3(0, -0.1, 0.4))
+	_mi(g, body, glass, Vector3(0, 0.25, -1.9)).scale = Vector3(1.0, 0.75, 0.9)
+	_mi(g, _box(Vector3(0.05, 1.2, 1.5)), dark, Vector3(1.02, -0.15, 0.3))           # open door
+	_mi(g, _box(Vector3(0.05, 1.2, 1.5)), dark, Vector3(-1.02, -0.15, 0.3))
+	_mi(g, _cyl(0.32, 7.0, 0.18), m, Vector3(0, 0.35, 4.6), Vector3(PI / 2, 0, 0))   # tail boom
+	_mi(g, _box(Vector3(0.12, 1.6, 0.9)), m, Vector3(0, 1.0, 7.9))                   # fin
+	_mi(g, _box(Vector3(1.8, 0.08, 0.5)), m, Vector3(0, 0.4, 6.8))                   # stabiliser
+	for x in [-0.95, 0.95]:
+		_mi(g, _cyl(0.05, 4.2), dark, Vector3(x, -1.5, 0.2), Vector3(PI / 2, 0, 0))     # skids
+		for z in [-0.9, 1.2]:
+			_mi(g, _cyl(0.04, 0.6), dark, Vector3(x * 0.92, -1.2, z), Vector3(0, 0, 0.3 * sign(x)))
+	_mi(g, _cyl(0.25, 0.5), dark, Vector3(0, 1.25, 0.2))                               # mast
+	var rotor := Node3D.new()
+	rotor.position = Vector3(0, 1.5, 0.2)
+	g.add_child(rotor)
+	for k in 2:
+		_mi(rotor, _box(Vector3(0.35, 0.05, 13.0)), dark, Vector3.ZERO, Vector3(0, k * PI / 2, 0))
+	var disc := CylinderMesh.new()
+	disc.top_radius = 6.5
+	disc.bottom_radius = 6.5
+	disc.height = 0.02
+	var blur := StandardMaterial3D.new()
+	blur.albedo_color = Color(0.05, 0.05, 0.05, 0.18)
+	blur.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	blur.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	_mi(rotor, disc, blur)
+	g.set_meta("rotor", rotor)
+	var tail := Node3D.new()
+	tail.position = Vector3(0.18, 1.0, 7.9)
+	g.add_child(tail)
+	_mi(tail, _box(Vector3(0.04, 2.2, 0.18)), dark)
+	g.set_meta("tail_rotor", tail)
+	var hb := Area3D.new()
+	hb.collision_layer = Defs.L_HITBOX
+	hb.collision_mask = 0
+	hb.monitoring = false
+	var cs := CollisionShape3D.new()
+	var sh := BoxShape3D.new()
+	sh.size = Vector3(2.4, 2.4, 6.0)
+	cs.shape = sh
+	cs.position = Vector3(0, 0, 0.6)
+	hb.add_child(cs)
+	g.add_child(hb)
+	g.set_meta("hitbox", hb)
+	return g

@@ -11,6 +11,9 @@ const STYLES := {
 	"shotgunner": {"camo": [Color(0.16, 0.16, 0.17), Color(0.11, 0.11, 0.12), Color(0.22, 0.22, 0.21), Color(0.08, 0.08, 0.09)], "vest": Color(0.12, 0.12, 0.13), "head": "helmet", "face": "balaclava"},
 	"rusher": {"camo": [Color(0.27, 0.16, 0.14), Color(0.18, 0.12, 0.11), Color(0.36, 0.25, 0.2), Color(0.12, 0.09, 0.09)], "vest": Color(0.16, 0.11, 0.09), "head": "none", "face": "balaclava", "scarf": Color(0.45, 0.06, 0.06)},
 	"heavy": {"camo": [Color(0.13, 0.13, 0.14), Color(0.09, 0.09, 0.1), Color(0.19, 0.19, 0.19), Color(0.07, 0.07, 0.08)], "vest": Color(0.1, 0.1, 0.11), "head": "jugg", "face": "visor", "heavy": true},
+	"sniper": {"camo": [Color(0.4, 0.42, 0.3), Color(0.3, 0.31, 0.21), Color(0.5, 0.48, 0.36), Color(0.2, 0.2, 0.15)], "vest": Color(0.3, 0.3, 0.22), "head": "cap", "face": "balaclava", "scarf": Color(0.32, 0.34, 0.24)},
+	"shield": {"camo": [Color(0.12, 0.13, 0.17), Color(0.08, 0.09, 0.12), Color(0.18, 0.19, 0.23), Color(0.05, 0.05, 0.07)], "vest": Color(0.1, 0.1, 0.13), "head": "helmet", "face": "balaclava"},
+	"grenadier": {"camo": [Color(0.45, 0.36, 0.25), Color(0.34, 0.26, 0.17), Color(0.56, 0.46, 0.33), Color(0.24, 0.18, 0.12)], "vest": Color(0.3, 0.24, 0.16), "head": "helmet", "face": "scarf", "scarf": Color(0.5, 0.4, 0.25)},
 	"friendly": {"camo": [Color(0.31, 0.33, 0.35), Color(0.2, 0.21, 0.23), Color(0.44, 0.45, 0.46), Color(0.12, 0.12, 0.14)], "vest": Color(0.23, 0.25, 0.27), "head": "helmet", "face": "skin", "friendly": true},
 }
 
@@ -36,6 +39,7 @@ var death_t := 0.0
 var death_dir := 1.0
 var fling := Vector3.ZERO
 var downed := false
+var crouch_k := 0.0
 # custom rigged character
 var rig: Node3D
 var anim: AnimationPlayer
@@ -262,8 +266,32 @@ func _build() -> void:
 		_add_flash(gun.get_meta("muzzle"))
 		# sling from the gun to the shoulder
 		_part(torso, Shapes.tube(0.008, 0.008, 0.5), strap, Vector3(-0.08, 0.42, -0.1), Vector3(0.9, 0, 0.6))
+	if style == "shield":
+		_build_shield(torso)
 	for mi in find_children("*", "MeshInstance3D", true, false):
 		(mi as MeshInstance3D).cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
+
+
+## Ballistic shield held in front of the body, with a small armoured view port.
+var shield: Node3D
+func _build_shield(parent: Node3D) -> void:
+	shield = Node3D.new()
+	shield.name = "Shield"
+	shield.position = Vector3(-0.06, -0.06, -0.42)
+	parent.add_child(shield)
+	var steel := Mat.pbr("painted_metal", Color(0.11, 0.12, 0.14), 0.55, 0.6)
+	_rb(shield, steel, Vector3(0.58, 1.0, 0.05), Vector3.ZERO, 0.04)
+	_rb(shield, Mat.solid(Color(0.1, 0.16, 0.2, 1.0), 0.05, 0.9), Vector3(0.26, 0.09, 0.02), Vector3(0, 0.36, -0.03), 0.01)
+	var lbl := Label3D.new()
+	lbl.text = "POLITIE"
+	lbl.font_size = 48
+	lbl.pixel_size = 0.004
+	lbl.modulate = Color(0.85, 0.85, 0.8)
+	lbl.position = Vector3(0, 0.15, -0.03)
+	lbl.rotation.y = PI
+	shield.add_child(lbl)
+	arms[0].sh.rotation = Vector3(1.0, 0, 0.1)
+	arms[0].el.rotation = Vector3(0.9, 0, 0)
 
 
 func _add_flash(muzzle: Node3D) -> void:
@@ -398,6 +426,15 @@ func animate(dt: float, mv: bool, speed: float, state: int, t: float) -> void:
 		arms[0].sh.rotation.x = sin(phase) * 0.8 * leg_blend + 0.2
 		arms[1].sh.rotation.x = 2.2 if state == 2 else -sin(phase) * 0.8 * leg_blend + 0.2
 	neck.rotation.x = sin(t * 1.3 + phase) * 0.02
+	# state 3 = crouched behind cover
+	var ck := 1.0 if state == 3 and not mv else 0.0
+	crouch_k = move_toward(crouch_k, ck, dt * 5.0)
+	if crouch_k > 0.0:
+		hips.position.y -= 0.38 * crouch_k
+		for i in 2:
+			legs[i].thigh.rotation.x = lerpf(legs[i].thigh.rotation.x, -1.25 if i == 0 else -0.35, crouch_k)
+			legs[i].knee.rotation.x = lerpf(legs[i].knee.rotation.x, 1.9 if i == 0 else 1.6, crouch_k)
+		torso.rotation.x += 0.15 * crouch_k
 	if downed:
 		rotation.x = lerp(rotation.x, -1.35, dt * 6.0)
 		position.y = lerp(position.y, 0.25, dt * 6.0)
@@ -419,6 +456,8 @@ func muzzle_flash() -> void:
 
 func die(dir: Vector3, explosive: bool) -> void:
 	dead = true
+	if shield:
+		shield.visible = false
 	death_t = 0.0
 	if flash:
 		flash.visible = false

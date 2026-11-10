@@ -29,6 +29,8 @@ var time := 0.0
 var P := {}                  # peer id -> state dict
 var wave := 0
 var cleared := 0
+var special := ""            # special wave type: "", "night", "smoke", "rushers", "snipers"
+var modifiers: Array = []    # endless-mode modifiers: "armored", "volatile"
 var state := "inter"
 var timer := 15.0
 var spawn_queue: Array = []
@@ -39,6 +41,17 @@ var mines := {}
 var turrets := {}
 var drones := {}
 var strikes: Array = []
+var helis := {}              # id -> enemy transport helicopter
+var glass_broken := {}       # map glass pane id -> true
+var lights_out := {}         # map light id -> true
+var power := true            # mall lights on (night waves cut it)
+var wave_t := 0.0
+var cut_at := -1.0           # seconds into the wave when the power goes (night waves, some late waves)
+var lasers := {}             # client: enemy id -> {pid, t, node}
+var nade_cd := 0.0           # global spacing between enemy grenades
+var nades_thrown := 0
+var approach := -1           # index into map.spawns the next wave mostly comes from (announced by a convoy)
+var convoy_sent := false
 var events: Array = []
 var snap_t := 0.0
 
@@ -136,8 +149,15 @@ func reset() -> void:
 	strikes.clear()
 	wave = 0
 	cleared = 0
+	special = ""
+	modifiers = []
 	state = "inter"
 	timer = 20.0
+	approach = randi() % max(1, map.spawns.size())
+	convoy_sent = false
+	if Net.args.has("startwave"):            # dev / testing: begin at a later wave
+		wave = int(Net.args.startwave) - 1
+		cleared = wave
 	spawn_queue.clear()
 	var i := 0
 	for id in P:
@@ -151,7 +171,7 @@ func _init_player(p: Dictionary, idx: int) -> void:
 		"weapons": ["pistol"], "cur": "pistol", "frags": 2, "mines": 0, "turrets": 0, "self_revive": 0, "strikes": 0,
 		"drones": 0, "carpets": 0, "downed": false, "dead": false, "down_t": 0.0, "rev_p": 0.0, "rev": 0, "last_dmg": -99.0,
 		"kills": 0, "heads": 0, "earned": 0, "downs": 0, "combo": 0, "combo_t": 0.0, "ready": false, "flawless": true, "tp": 1,
-		"att": {}}, true)
+		"att": {}, "camp_at": s, "camp_t": 0.0, "nvg": 0}, true)
 
 
 func _add_player(id: int, name: String) -> void:
@@ -409,8 +429,12 @@ func _player_hits(p: Dictionary, m: Dictionary) -> void:
 		var e: Enemy = enemies.get(int(h.eid))
 		if e == null:
 			continue
-		var d := Defs.damage_at(w, float(h.dist))
+		if int(h.zone) == 3:
+			continue                 # riot shield soaks it
+		var d: float = Defs.damage_at(w, float(h.dist)) * clamp(float(h.get("mul", 1.0)), 0.2, 1.0)
 		var head: bool = int(h.zone) == 0
+		if "armored" in modifiers and not head:
+			d *= 0.7
 		if head:
 			d *= 1.0 + (w.head - 1.0) * Defs.ENEMIES[e.type].head
 		elif int(h.zone) == 2:
@@ -454,6 +478,9 @@ func _damage_enemy(e: Enemy, dmg: float, p, o := {}) -> void:
 		"src": o.get("src", ""), "expl": o.get("expl", false), "money": money, "combo": combo, "bonus": bonus})
 	dying[e.id] = e
 	e.set_physics_process(false)
+	e._cancel_aim()
+	if "volatile" in modifiers:
+		_enemy_blast(e.global_position + Vector3(0, 0.8, 0), 3.5, 40.0)
 
 
 func damage_player(p: Dictionary, dmg: float, from: Vector3) -> void:
@@ -479,6 +506,11 @@ func damage_player(p: Dictionary, dmg: float, from: Vector3) -> void:
 func _explode(pos: Vector3, r: float, dmg: float, owner: int, src: String) -> void:
 	ev({"t": "explode", "pos": pos, "r": r})
 	var p = P.get(owner)
+	_break_glass_near(pos, r)
+	for hid in helis.keys():
+		var hd: float = (helis[hid].pos as Vector3).distance_to(pos)
+		if hd < r + 4.0:
+			_damage_heli(hid, dmg * (1.0 - 0.6 * hd / (r + 4.0)), p)
 	for e in enemies.values():
 		var d: float = (e.global_position + Vector3(0, 0.9, 0)).distance_to(pos)
 		if d < r:
@@ -491,6 +523,50 @@ func _explode(pos: Vector3, r: float, dmg: float, owner: int, src: String) -> vo
 			damage_player(q, dmg * 0.22 * (1.0 - d / (r * 0.8)) * (1.0 if q.id == owner else 0.5), pos)
 
 
+## How far enemies can see a player (reduced in smoke waves).
+func sight_range() -> float:
+	return 22.0 if special == "smoke" else 70.0
+
+
+# ---- breakable glass and lights (server decides, every peer mirrors it)
+func _break_glass_near(pos: Vector3, r: float) -> void:
+	for gid in map.glass_near(pos, r):
+		_break_glass(gid)
+
+
+func _break_glass(gid: int) -> void:
+	if glass_broken.has(gid) or gid < 0 or gid >= map.glass.size():
+		return
+	glass_broken[gid] = true
+	ev({"t": "glass", "id": gid})
+
+
+func _shoot_light(lid: int) -> void:
+	if lights_out.has(lid) or lid < 0 or lid >= map.lights.size():
+		return
+	lights_out[lid] = true
+	ev({"t": "light", "id": lid})
+
+
+func _set_power(on: bool) -> void:
+	if power == on:
+		return
+	power = on
+	ev({"t": "power", "on": on})
+
+
+## Enemy explosive (grenade, volatile death): hurts players only.
+func _enemy_blast(pos: Vector3, r: float, dmg: float) -> void:
+	ev({"t": "explode", "pos": pos, "r": r})
+	var space := get_world_3d().direct_space_state
+	for q in P.values():
+		var qp: Vector3 = q.pos + Vector3(0, 1.0, 0)
+		var d: float = qp.distance_to(pos)
+		if d < r and not _blocked(space, pos + Vector3(0, 0.3, 0), qp):
+			damage_player(q, dmg * (1.0 - d / r), pos)
+	_break_glass_near(pos, r)
+
+
 func _blocked(space: PhysicsDirectSpaceState3D, a: Vector3, b: Vector3) -> bool:
 	var q := PhysicsRayQueryParameters3D.create(a, b, Defs.L_WORLD)
 	return not space.intersect_ray(q).is_empty()
@@ -501,35 +577,80 @@ func _start_wave() -> void:
 	wave += 1
 	state = "active"
 	var n: int = max(1, P.size())
+	special = _special_for(wave)
+	modifiers = []
+	if wave > 20:
+		modifiers.append("armored")
+	if wave > 25:
+		modifiers.append("volatile")
 	var count := roundi((5 + wave * 2.2 + min(12.0, wave * 0.4)) * (1.0 + 0.6 * (n - 1)))
+	if special == "rushers":
+		count = roundi(count * 1.3)
 	var q := []
+	var snipers := 0
 	for i in count:
-		var r := randf()
-		var t := "grunt"
-		if wave >= 2 and r < min(0.4, 0.1 + wave * 0.03):
-			t = "rifleman"
-		elif wave >= 3 and r < min(0.6, 0.25 + wave * 0.035):
-			t = "rusher"
-		elif wave >= 4 and r < min(0.78, 0.33 + wave * 0.045):
-			t = "shotgunner"
+		var t := _pick_enemy(wave)
+		if special == "rushers":
+			t = "dog" if randf() < 0.4 else "rusher"
+		elif special == "snipers":
+			t = "sniper" if randf() < 0.35 else ("rifleman" if randf() < 0.6 else "grunt")
+		elif t == "sniper":
+			snipers += 1
+			if snipers > 2 + wave / 10:
+				t = "rifleman"
 		q.append(t)
 	if wave % 5 == 0:
 		for i in ceili(wave / 10.0) + int((n - 1) / 2):
 			q.insert(int(q.size() * randf_range(0.3, 0.8)), "heavy")
 	elif wave > 6 and randf() < 0.35:
 		q.append("heavy")
+	# troop helicopter from wave 8, every 4th wave (two from wave 20)
+	if wave >= 8 and wave % 4 == 0:
+		for i in (2 if wave >= 20 else 1):
+			q.insert(int(q.size() * randf_range(0.25, 0.6)), "HELI")
 	spawn_queue = q
 	spawn_t = 1.5
+	wave_t = 0.0
+	cut_at = randf_range(12.0, 25.0) if special == "night" or (wave >= 12 and randf() < 0.25) else -1.0
 	for p in P.values():
 		p.ready = false
 		p.flawless = true
-	ev({"t": "wave", "n": wave, "count": q.size(), "boss": wave % 5 == 0})
+	ev({"t": "wave", "n": wave, "count": q.size(), "boss": wave % 5 == 0, "special": special, "mods": modifiers})
+
+
+## Regular wave mix: new enemy types join as the waves go on.
+func _pick_enemy(w: int) -> String:
+	var r := randf()
+	if w >= 7 and r < 0.07:
+		return "sniper"
+	if w >= 6 and r < 0.15:
+		return "shield"
+	if w >= 5 and r < 0.25:
+		return "grenadier"
+	r = randf()
+	if w >= 2 and r < min(0.4, 0.1 + w * 0.03):
+		return "rifleman"
+	if w >= 3 and r < min(0.6, 0.25 + w * 0.035):
+		return "dog" if w >= 4 and randf() < 0.4 else "rusher"
+	if w >= 4 and r < min(0.78, 0.33 + w * 0.045):
+		return "shotgunner"
+	return "grunt"
+
+
+## Every few waves something different: night (with a power cut in the mall), smoke, a rush or a sniper wave.
+func _special_for(w: int) -> String:
+	if w < 4 or w % 5 == 0 or w % 3 != 1:
+		return ""
+	return ["smoke", "rushers", "night", "snipers"][(w / 3 - 1) % 4]
 
 
 func _end_wave() -> void:
 	cleared = wave
 	state = "inter"
 	timer = 30.0
+	approach = randi() % max(1, map.spawns.size())
+	convoy_sent = false
+	_set_power(true)
 	var bonus := Defs.wave_bonus(wave)
 	var i := 0
 	for p in P.values():
@@ -560,7 +681,10 @@ func _respawn(p: Dictionary, idx: int) -> void:
 	ev({"t": "respawn", "to": p.id})
 
 
-func _spawn_enemy(type: String) -> void:
+func _spawn_enemy(type: String, at = null) -> void:
+	if type == "HELI":
+		_spawn_heli()
+		return
 	var best: Vector3 = map.spawns[0]
 	var bs := -1.0
 	for k in 3:
@@ -569,9 +693,13 @@ func _spawn_enemy(type: String) -> void:
 		for p in P.values():
 			d = min(d, s.distance_to(p.pos))
 		var score: float = min(d, 30.0) + randf() * 10.0
+		if approach >= 0 and approach < map.spawns.size():
+			score -= s.distance_to(map.spawns[approach]) * 0.35     # most come the way the convoy arrived
 		if score > bs:
 			bs = score
 			best = s
+	if at != null:
+		best = at
 	var hp_mul: float = 1.0 + max(0, wave - 1) * 0.045 + (P.size() - 1) * 0.15
 	var e := Enemy.new()
 	e.id = next_id
@@ -580,6 +708,8 @@ func _spawn_enemy(type: String) -> void:
 	e.game = self
 	e.max_hp = Defs.ENEMIES[type].hp * hp_mul
 	e.hp = e.max_hp
+	if not Defs.ENEMIES[type].get("melee", false) and enemies.size() >= 3 and randf() < 0.3:
+		e.role = "flank"
 	e.name = "E%d" % e.id
 	enemies[e.id] = e
 	enemies_root.add_child(e)
@@ -628,7 +758,13 @@ func _remote_joined() -> Array:
 
 func _server_tick(dt: float) -> void:
 	var any_up := false
+	nade_cd -= dt
 	for p in P.values():
+		if (p.pos as Vector3).distance_to(p.camp_at) > 4.0:
+			p.camp_at = p.pos
+			p.camp_t = 0.0
+		else:
+			p.camp_t += dt
 		if p.combo_t > 0.0:
 			p.combo_t -= dt
 			if p.combo_t <= 0.0:
@@ -674,9 +810,17 @@ func _server_tick(dt: float) -> void:
 	if state == "inter":
 		if P.size() > 0:
 			timer -= dt
+		# trucks pull up and doors slam where the next wave will come from
+		if timer < 9.0 and not convoy_sent and approach >= 0 and approach < map.spawns.size():
+			convoy_sent = true
+			ev({"t": "convoy", "pos": map.spawns[approach]})
 		if timer <= 0.0:
 			_start_wave()
 	elif state == "active":
+		wave_t += dt
+		if cut_at > 0.0 and wave_t > cut_at and power:
+			_set_power(false)
+			ev({"t": "announce", "text": "THEY CUT THE POWER", "sub": "Night vision is in the Equipment Armory", "snd": "radio"})
 		spawn_t -= dt
 		var cap: int = min(30, 12 + wave + (P.size() - 1) * 4)
 		if not spawn_queue.is_empty() and spawn_t <= 0.0 and enemies.size() < cap:
@@ -687,6 +831,7 @@ func _server_tick(dt: float) -> void:
 	if state != "over":
 		_tick_projectiles(dt)
 		_tick_support(dt)
+		_tick_helis(dt)
 
 
 func _tick_projectiles(dt: float) -> void:
@@ -814,6 +959,95 @@ func _tick_support(dt: float) -> void:
 		i -= 1
 
 
+# =========================================================================== server: enemy helicopter
+func _spawn_heli() -> void:
+	var drop: Vector3 = map.spawns[randi() % map.spawns.size()]
+	var away := Vector3(drop.x, 0, drop.z)
+	away = away.normalized() if away.length() > 1.0 else Vector3.FORWARD
+	var from := drop + away * 260.0 + Vector3(0, 55, 0)
+	var hp: float = Defs.HELI.hp * (1.0 + wave * 0.03 + (P.size() - 1) * 0.25)
+	helis[next_id] = {"pos": from, "yaw": atan2(-(drop - from).x, -(drop - from).z), "hp": hp, "max": hp, "ph": "in", "t": 0.0,
+		"drop": drop, "from": from, "troops": Defs.HELI.troops + wave / 8, "cd": 2.0, "burst": 0}
+	next_id += 1
+	ev({"t": "announce", "text": "ENEMY HELICOPTER", "sub": "Troop transport inbound — shoot it down", "snd": "radio"})
+
+
+func _tick_helis(dt: float) -> void:
+	var space := get_world_3d().direct_space_state
+	for id in helis.keys():
+		var h: Dictionary = helis[id]
+		h.t += dt
+		var hover: Vector3 = h.drop + Vector3(0, 15.0, 0)
+		match h.ph:
+			"in":
+				var to: Vector3 = hover - h.pos
+				if to.length() < 1.5:
+					h.ph = "drop"
+					h.t = 0.0
+				else:
+					h.pos += to.normalized() * min(to.length(), 30.0 * dt * clamp(to.length() / 25.0, 0.3, 1.0))
+					h.yaw = lerp_angle(h.yaw, atan2(-to.x, -to.z), min(1.0, dt * 2.0))
+			"drop":
+				h.pos = hover + Vector3(sin(h.t * 1.3) * 0.4, sin(h.t * 0.9) * 0.3, 0)
+				if h.troops > 0 and fmod(h.t, 1.1) < dt and h.t > 1.0:
+					h.troops -= 1
+					_spawn_enemy("rifleman" if randf() < 0.6 else "grunt", (h.drop as Vector3) + Vector3(randf_range(-2.5, 2.5), 0.1, randf_range(-2.5, 2.5)))
+				if h.troops <= 0 and h.t > 3.0:
+					h.ph = "out"
+			"out":
+				var to: Vector3 = (h.from as Vector3) - h.pos
+				h.pos += to.normalized() * 32.0 * dt
+				h.yaw = lerp_angle(h.yaw, atan2(-to.x, -to.z), min(1.0, dt * 1.5))
+				if to.length() < 5.0:
+					helis.erase(id)
+					continue
+		# door gunner
+		h.cd -= dt
+		if h.cd <= 0.0 and h.ph != "out":
+			var gun: Vector3 = h.pos - Vector3(0, 1.6, 0)
+			var tgt = null
+			var td := 90.0
+			for p in _alive_players():
+				var d: float = (p.pos as Vector3).distance_to(gun)
+				if d < td and not _blocked(space, gun, p.pos + Vector3(0, 1.2, 0)):
+					td = d
+					tgt = p
+			if tgt == null:
+				h.cd = 0.5
+				continue
+			h.burst += 1
+			h.cd = 0.11 if h.burst < 12 else randf_range(1.5, 2.5)
+			if h.burst >= 12:
+				h.burst = 0
+			var hit := randf() < 0.22
+			var end: Vector3 = tgt.pos + Vector3(0, 1.1, 0)
+			if hit:
+				damage_player(tgt, Defs.HELI.dmg * (1.0 + wave * 0.02), gun)
+			else:
+				end += Vector3(randf_range(-2, 2), randf_range(-1.2, 0.5), randf_range(-2, 2))
+			ev({"t": "shot", "pid": -1, "w": "heli_gun", "o": gun, "e": end, "hit": hit})
+
+
+func _damage_heli(id: int, dmg: float, p) -> void:
+	var h: Dictionary = helis.get(id, {})
+	if h.is_empty():
+		return
+	h.hp -= dmg
+	if p:
+		ev({"t": "hit", "to": p.id, "eid": -1, "dmg": roundi(dmg), "head": false, "src": "heli"})
+	if h.hp > 0.0:
+		return
+	helis.erase(id)
+	ev({"t": "heli_down", "pos": h.pos, "yaw": h.yaw})
+	ev({"t": "explode", "pos": h.pos, "r": 9.0})
+	if p:
+		p.money += Defs.HELI.reward
+		p.earned += Defs.HELI.reward
+		p.kills += 1
+		ev({"t": "money", "to": p.id, "amt": Defs.HELI.reward, "label": "HELICOPTER DOWN"})
+		ev({"t": "msg", "text": "%s shot down the helicopter!" % p.name})
+
+
 # =========================================================================== snapshot
 func _snapshot() -> Dictionary:
 	var pl := []
@@ -821,7 +1055,7 @@ func _snapshot() -> Dictionary:
 		pl.append({"id": p.id, "n": p.name, "p": p.pos, "yaw": p.yaw, "pitch": p.pitch, "cr": p.cr, "hp": ceili(p.hp), "ar": ceili(p.armor),
 			"m": p.money, "w": p.weapons.duplicate(), "cur": p.cur, "fr": p.frags, "mi": p.mines, "tu": p.turrets, "sr": p.self_revive,
 			"as": p.strikes, "dr": p.drones, "cb": p.carpets, "dn": p.downed, "dd": p.dead, "dt": p.down_t, "rp": p.rev_p,
-			"k": p.kills, "h": p.heads, "e": p.earned, "rd": p.ready, "co": p.combo, "tp": p.tp, "at": p.att.duplicate(true)})
+			"k": p.kills, "h": p.heads, "e": p.earned, "rd": p.ready, "co": p.combo, "tp": p.tp, "at": p.att.duplicate(true), "nv": p.nvg})
 	var en := []
 	for e in enemies.values():
 		en.append([e.id, e.type, e.global_position, e.rotation.y, roundi(100.0 * e.hp / e.max_hp), e.st, e.moving])
@@ -837,8 +1071,12 @@ func _snapshot() -> Dictionary:
 	var dr := []
 	for id in drones:
 		dr.append([id, drones[id].pos, drones[id].a])
+	var he := []
+	for id in helis:
+		he.append([id, helis[id].pos, helis[id].yaw, roundi(100.0 * helis[id].hp / helis[id].max)])
 	return {"wave": wave, "cleared": cleared, "state": state, "timer": ceili(timer), "left": enemies.size() + spawn_queue.size(),
-		"players": pl, "enemies": en, "proj": pr, "mines": mi, "turrets": tu, "drones": dr, "time": time}
+		"players": pl, "enemies": en, "proj": pr, "mines": mi, "turrets": tu, "drones": dr, "helis": he, "time": time,
+		"sp": special, "mods": modifiers, "gb": glass_broken.keys(), "lo": lights_out.keys(), "pw": power}
 
 
 func _apply_snapshot(s: Dictionary) -> void:
@@ -908,7 +1146,7 @@ func _sync_objects(s: Dictionary) -> void:
 	for n in obj_nodes.values():
 		n.set_meta("seen", false)
 	for a in s.proj:
-		var n := _obj("p%d" % a[0], func(): return Props.frag() if a[1] == "frag" else Props.rocket())
+		var n := _obj("p%d" % a[0], func(): return Props.frag() if a[1] == "frag" or a[1] == "efrag" else Props.rocket())
 		if not n.has_meta("prev"):
 			n.global_position = a[2]
 		var prev: Vector3 = n.get_meta("prev", a[2])
@@ -933,6 +1171,19 @@ func _sync_objects(s: Dictionary) -> void:
 			n.global_position = a[1]
 		n.set_meta("target", a[1])
 		n.set_meta("ang", a[2])
+	for a in s.get("helis", []):
+		var hid: int = a[0]
+		var n := _obj("h%d" % hid, func(): return _make_heli(hid))
+		if not n.has_meta("target"):
+			n.global_position = a[1]
+		n.set_meta("target", a[1])
+		n.set_meta("yaw", a[2])
+	# breakable glass / lights / power, mirrored from the server (covers late joiners too)
+	for gid in s.get("gb", []):
+		map.break_glass(int(gid), false)
+	for lid in s.get("lo", []):
+		map.shoot_light(int(lid), false)
+	map.set_power(bool(s.get("pw", true)))
 	for k in obj_nodes.keys():
 		var n: Node3D = obj_nodes[k]
 		if not n.get_meta("seen"):
@@ -940,10 +1191,32 @@ func _sync_objects(s: Dictionary) -> void:
 			obj_nodes.erase(k)
 
 
+func _make_heli(hid: int) -> Node3D:
+	var n := Props.helicopter()
+	(n.get_meta("hitbox") as Area3D).set_meta("heli_id", hid)
+	var snd := AudioStreamPlayer3D.new()
+	snd.stream = Sfx.streams.get("rotor")
+	snd.bus = "World"
+	snd.unit_size = 25.0
+	snd.max_distance = 500.0
+	snd.volume_db = 4.0
+	n.add_child(snd)
+	snd.autoplay = true
+	return n
+
+
 func _process(dt: float) -> void:
+	_update_lasers(dt)
 	# Smooth object visuals between snapshots
 	for k in obj_nodes:
 		var n: Node3D = obj_nodes[k]
+		if k.begins_with("h"):
+			var t: Vector3 = n.get_meta("target")
+			n.global_position = n.global_position.lerp(t, min(1.0, dt * 6.0))
+			n.rotation.y = lerp_angle(n.rotation.y, float(n.get_meta("yaw")), min(1.0, dt * 4.0))
+			(n.get_meta("rotor") as Node3D).rotate_y(dt * 28.0)
+			(n.get_meta("tail_rotor") as Node3D).rotate_x(dt * 40.0)
+			continue
 		if n.has_meta("target"):
 			var t: Vector3 = n.get_meta("target")
 			if k.begins_with("p"):
@@ -1124,3 +1397,75 @@ func _jet_run(center: Vector3, ang: float, delay: float, length: float) -> void:
 	# red smoke on the target
 	for i in 10:
 		get_tree().create_timer(i * 0.3).timeout.connect(func(): fx.particle(false, center + Vector3(0, 0.3, 0), Vector3(randf_range(-0.3, 0.3), 1.5, randf_range(-0.3, 0.3)), 0.5, 3.0, 3.0, Color(0.8, 0.12, 0.08, 0.6)))
+
+
+# =========================================================================== client effects for the new threats
+## Sniper laser: a red beam from the sniper to the player it is aiming at, for the aim duration.
+func _on_laser(e: Dictionary) -> void:
+	var old: Dictionary = lasers.get(e.eid, {})
+	if not old.is_empty():
+		(old.node as Node3D).queue_free()
+		lasers.erase(e.eid)
+	if int(e.pid) < 0:
+		return
+	var mi := MeshInstance3D.new()
+	var cyl := CylinderMesh.new()
+	cyl.top_radius = 0.012
+	cyl.bottom_radius = 0.012
+	cyl.height = 1.0
+	cyl.radial_segments = 6
+	cyl.rings = 1
+	mi.mesh = cyl
+	mi.material_override = Mat.emissive(Color(1.0, 0.05, 0.03), 6.0)
+	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	objects_root.add_child(mi)
+	lasers[e.eid] = {"pid": int(e.pid), "t": float(e.d), "node": mi}
+	if int(e.pid) == local_id:
+		Sfx.play("laser", -6.0, 1.0, 0.0)
+		if hud: hud.feed("<Sniper has you in his sights!>")
+
+
+func _update_lasers(dt: float) -> void:
+	for eid in lasers.keys():
+		var l: Dictionary = lasers[eid]
+		l.t -= dt
+		var en: Enemy = enemies.get(eid)
+		var pn: Player = player_nodes.get(l.pid)
+		if l.t <= -0.2 or en == null or pn == null or not is_instance_valid(en) or en.model == null or en.model.gun == null:
+			(l.node as Node3D).queue_free()
+			lasers.erase(eid)
+			continue
+		var a: Vector3 = (en.model.gun.get_meta("muzzle") as Node3D).global_position
+		var b: Vector3 = pn.global_position + Vector3(0, 1.45 if not (pn.is_local and pn.crouch) else 0.95, 0)
+		if pn.is_local:
+			b = pn.cam.global_position + Vector3(0, -0.12, 0)     # aim it at the chest so it shows on screen
+		var mi: MeshInstance3D = l.node
+		var len := a.distance_to(b)
+		mi.global_transform = Transform3D(Basis.looking_at((b - a).normalized(), Vector3.UP) * Basis(Vector3.RIGHT, PI / 2), (a + b) * 0.5)
+		mi.scale = Vector3(1, len, 1)
+		mi.visible = fmod(time * 10.0, 1.0) < 0.85 or l.t > 0.6
+
+
+## Before a wave: engines and door slams from the direction the next wave will mostly come from.
+func _convoy(pos: Vector3) -> void:
+	Sfx.play_at("engine", pos, 6.0, 1.0, 500.0)
+	for i in 5:
+		get_tree().create_timer(2.8 + i * randf_range(0.35, 0.7)).timeout.connect(func(): Sfx.play_at("door", pos + Vector3(randf_range(-4, 4), 0, randf_range(-4, 4)), 2.0, randf_range(0.9, 1.1), 400.0))
+	if hud: hud.feed("You hear vehicles pulling up…")
+
+
+func _heli_wreck(pos: Vector3, yaw: float) -> void:
+	var n := Props.helicopter()
+	objects_root.add_child(n)
+	n.global_position = pos
+	n.rotation.y = yaw
+	var ground := Vector3(pos.x, 0.6, pos.z)
+	var tw := create_tween()
+	tw.tween_property(n, "global_position", ground, 1.6).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_IN)
+	tw.parallel().tween_property(n, "rotation", Vector3(0.5, yaw + 4.0, 0.7), 1.6)
+	tw.tween_callback(func():
+		fx.explosion(ground, 10.0)
+		Sfx.play_at("explosion", ground, 8.0, 0.7, 500.0))
+	for i in 30:
+		get_tree().create_timer(1.6 + i * 0.5).timeout.connect(func(): if is_instance_valid(n): fx.particle(false, ground + Vector3(randf_range(-1, 1), 1.0, randf_range(-1, 1)), Vector3(0, 2.5, 0), 1.5, 4.0, 6.0, Color(0.1, 0.1, 0.1, 0.55)))
+	get_tree().create_timer(18.0).timeout.connect(func(): if is_instance_valid(n): n.queue_free())

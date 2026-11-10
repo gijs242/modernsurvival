@@ -12,6 +12,9 @@ const EYE := 1.62
 const EYE_CR := 1.05
 const EYE_DOWN := 0.45
 
+## Damage kept after punching through a surface (0 = stops the bullet).
+const PENETRATION := {"glass": 0.9, "wood": 0.65, "metal": 0.5, "plaster": 0.6}
+
 const HIP := {"pistol": Vector3(0.14, -0.15, -0.3), "launcher": Vector3(0.2, -0.17, -0.32)}
 const HIP_DEFAULT := Vector3(0.15, -0.16, -0.3)
 const ADS := {"pistol": Vector3(0, -0.068, -0.3), "smg": Vector3(0, -0.11, -0.26), "shotgun": Vector3(0, -0.073, -0.3),
@@ -81,6 +84,17 @@ var fov := 78.0
 var hp_prev := 100
 var heartbeat_t := 0.0
 var flash_t := 0.0
+var tactical := false      # reloading with a round still chambered: faster, and +1 in the chamber
+var breath := 4.0          # seconds of held breath left (scoped)
+var holding_breath := false
+var winded_t := 0.0
+var scope_sway := Vector2.ZERO
+var inspect_t := 0.0
+const INSPECT := 2.6
+var nvg_on := false
+var nvg_layer: CanvasLayer
+var spec_i := 0            # which teammate we spectate while dead
+var spec_name := ""
 
 
 # ======================================================================= stats with attachments
@@ -274,6 +288,12 @@ func _puppet(dt: float) -> void:
 func _unhandled_input(ev: InputEvent) -> void:
 	if not is_local or not _input_enabled():
 		return
+	if dead:
+		if ev.is_action_pressed("fire"):
+			spec_i += 1
+		elif ev.is_action_pressed("aim"):
+			spec_i -= 1
+		return
 	if ev is InputEventMouseMotion and Input.mouse_mode == Input.MOUSE_MODE_CAPTURED:
 		var zoom := lerpf(1.0, ws().zoom, ads)
 		var s := 0.0022 * sens / zoom
@@ -328,6 +348,11 @@ func _unhandled_input(ev: InputEvent) -> void:
 	if ev.is_action_pressed("ready"):
 		game.send({"t": "ready"})
 		Sfx.play("ui", -6.0)
+	if ev.is_action_pressed("inspect") and not reloading and ads < 0.2 and swap_t <= 0.0 and designating == "" and not downed:
+		inspect_t = INSPECT
+		Sfx.play("swap", -10.0, 0.8)
+	if ev.is_action_pressed("nvg") and int(state.get("nv", 0)) > 0:
+		_set_nvg(not nvg_on)
 
 
 func _input_enabled() -> bool:
@@ -368,11 +393,17 @@ func _local_frame(dt: float) -> void:
 			Sfx.play("mag_in", -5.0)
 		elif reload_stage == 2 and k > 0.85:
 			reload_stage = 3
-			Sfx.play("pump" if cur == "shotgun" else "bolt", -6.0)
+			if not tactical:                 # only rack the bolt on an empty gun
+				Sfx.play("pump" if cur == "shotgun" else "bolt", -6.0)
 		if reload_t <= 0.0:
 			_finish_reload()
 	if input_ok and trigger_held and w.auto and designating == "":
 		_try_fire()
+	if inspect_t > 0.0:
+		inspect_t = max(0.0, inspect_t - dt)
+		if ads > 0.1 or sprinting:
+			inspect_t = 0.0
+	_update_breath(dt, input_ok)
 	if designating != "":
 		_update_designator()
 	# recoil recovery
@@ -433,7 +464,8 @@ func _move(dt: float, input_ok: bool) -> void:
 		var stride := 2.6 if sprinting else 2.0
 		if step_d > stride:
 			step_d = 0.0
-			Sfx.play("step", -16.0 if crouch else -10.0 if not sprinting else -7.0, 1.0, 0.12)
+			var surf: String = game.map.step_surface(global_position)
+			Sfx.play("step" if surf == "" else "step_" + surf, -16.0 if crouch else -10.0 if not sprinting else -7.0, 1.0, 0.12)
 	if global_position.y < -5.0:
 		global_position = Vector3(0, 1, 4)
 
@@ -447,7 +479,7 @@ func _update_camera(dt: float) -> void:
 	var shake: float = game.fx.shake
 	var sh := Vector3(randf_range(-1, 1), randf_range(-1, 1), 0) * shake * 0.06
 	cam.position = Vector3(0, eye_h, 0) + bob + sh
-	cam.rotation = Vector3(pitch + recoil.y + flinch.y + sh.y, yaw + recoil.x + flinch.x, sh.x * 0.5)
+	cam.rotation = Vector3(pitch + recoil.y + flinch.y + sh.y + scope_sway.y, yaw + recoil.x + flinch.x + scope_sway.x, sh.x * 0.5)
 	var zoom := lerpf(1.0, ws().zoom, ads)
 	cam.fov = lerpf(cam.fov, (fov / zoom) + (6.0 if sprinting else 0.0), min(1.0, dt * 12.0))
 	vm_cam.global_transform = cam.global_transform
@@ -460,6 +492,61 @@ func _update_camera(dt: float) -> void:
 	Sfx.start_ambience()
 
 
+## Scoped: the sight drifts with your breathing. Hold Shift to hold your breath (about 4 s) for a steady
+## shot; run out and the sway is worse for a moment while you catch your breath.
+func _update_breath(dt: float, input_ok: bool) -> void:
+	var scoped: bool = ads > 0.9 and ws().zoom >= 2.5 and designating == ""
+	var want: bool = scoped and input_ok and Input.is_action_pressed("sprint") and winded_t <= 0.0 and breath > 0.0
+	if want and not holding_breath:
+		Sfx.play("breath_in", -12.0, 1.0, 0.05)
+	elif holding_breath and not want:
+		Sfx.play("breath_out", -12.0, 1.0, 0.05)
+	holding_breath = want
+	if holding_breath:
+		breath -= dt
+		if breath <= 0.0:
+			winded_t = 2.2
+	else:
+		breath = min(4.0, breath + dt * 1.2)
+	winded_t = max(0.0, winded_t - dt)
+	var amp := 0.0
+	if scoped:
+		amp = 0.0042 * (0.06 if holding_breath else (2.2 if winded_t > 0.0 else 1.0)) * (0.6 if crouch else 1.0)
+	var t := game.time
+	var target := Vector2(sin(t * 0.83) * 0.7 + sin(t * 1.9) * 0.3, sin(t * 1.21) * 0.6 + cos(t * 0.57) * 0.4) * amp
+	scope_sway = scope_sway.lerp(target, min(1.0, dt * 6.0))
+
+
+func _set_nvg(on: bool) -> void:
+	nvg_on = on
+	Sfx.play("beep", -8.0, 0.7 if on else 0.5, 0.0)
+	if nvg_layer == null:
+		nvg_layer = CanvasLayer.new()
+		nvg_layer.layer = 5
+		var rect := ColorRect.new()
+		rect.set_anchors_preset(Control.PRESET_FULL_RECT)
+		rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		var sh := Shader.new()
+		sh.code = """shader_type canvas_item;
+uniform sampler2D screen : hint_screen_texture, filter_linear;
+void fragment() {
+	vec3 c = texture(screen, SCREEN_UV).rgb;
+	float l = dot(c, vec3(0.3, 0.59, 0.11));
+	l = 1.0 - exp(-l * 9.0);                                          // amplify the dark, compress the bright
+	float n = fract(sin(dot(SCREEN_UV * 731.0 + TIME * 37.0, vec2(12.9898, 78.233))) * 43758.5453);
+	l = l * 0.9 + n * 0.1;
+	vec2 d = SCREEN_UV - 0.5;
+	float vig = smoothstep(0.75, 0.35, length(d * vec2(1.6, 1.0)));
+	COLOR = vec4(vec3(0.25, 1.0, 0.35) * l * vig, 1.0);
+}"""
+		var m := ShaderMaterial.new()
+		m.shader = sh
+		rect.material = m
+		nvg_layer.add_child(rect)
+		add_child(nvg_layer)
+	nvg_layer.visible = on
+
+
 # ======================================================================= weapons
 func _equip(w: String, instant := false) -> void:
 	if not ammo.has(w) and w != "designator":
@@ -468,6 +555,7 @@ func _equip(w: String, instant := false) -> void:
 		Sfx.play("swap", -6.0)
 	cur = w
 	reloading = false
+	inspect_t = 0.0
 	swap_t = 0.0 if instant else 0.35
 	_set_viewmodel(w)
 
@@ -574,6 +662,7 @@ func _try_fire() -> void:
 		_start_reload()
 		return
 	a.mag -= 1
+	inspect_t = 0.0
 	fire_cd = 60.0 / w.rpm
 	sprinting = false
 	var origin := cam.global_position
@@ -598,36 +687,75 @@ func _try_fire() -> void:
 	var spread: float = lerpf(w.spread, w.ads_spread, ads) * (1.6 if moving else 1.0) * (0.8 if crouch else 1.0) + bloom
 	bloom = min(0.05, bloom + w.bloom)
 	var hits := []
+	var heli_hits := {}
 	var first_end := origin + fwd * 200.0
 	var any_hit := false
 	var head_hit := false
 	for i in max(1, int(w.pellets)):
 		var d := _spread_dir(fwd, spread)
-		var q := PhysicsRayQueryParameters3D.create(origin, origin + d * 300.0, Defs.L_WORLD | Defs.L_HITBOX)
-		q.collide_with_areas = true
-		q.exclude = [get_rid()]
-		var r := space.intersect_ray(q)
+		var o := origin
+		var mul := 1.0
+		var exclude: Array[RID] = [get_rid()]
 		var end: Vector3 = origin + d * 300.0
-		if r:
+		# a bullet can punch through glass, wood, thin metal and light fittings, losing damage each time
+		for pass_i in 4:
+			var q := PhysicsRayQueryParameters3D.create(o, origin + d * 300.0, Defs.L_WORLD | Defs.L_HITBOX)
+			q.collide_with_areas = true
+			q.exclude = exclude
+			var r := space.intersect_ray(q)
+			end = origin + d * 300.0
+			if not r:
+				break
 			end = r.position
 			var col: Object = r.collider
 			if col is Area3D and col.has_meta("enemy_id"):
 				var zone: int = col.get_meta("zone")
-				hits.append({"eid": col.get_meta("enemy_id"), "zone": zone, "dist": origin.distance_to(end)})
+				if zone == 3:
+					game.fx.impact(end, r.normal, "metal")
+					Sfx.play_at("shield_ping", end, -4.0, randf_range(0.9, 1.1))
+					break
+				hits.append({"eid": col.get_meta("enemy_id"), "zone": zone, "dist": origin.distance_to(end), "mul": snappedf(mul, 0.01)})
 				any_hit = true
 				head_hit = head_hit or zone == 0
 				game.fx.blood(end, d, zone == 0, space)
 				if zone == 0:
 					Sfx.play_at("impact_flesh", end, -2.0)
+				break
+			if col is Area3D and col.has_meta("heli_id"):
+				var hid: int = col.get_meta("heli_id")
+				heli_hits[hid] = int(heli_hits.get(hid, 0)) + 1
+				any_hit = true
+				game.fx.impact(end, r.normal, "metal")
+				if randf() < 0.4:
+					Sfx.play_at("impact_metal", end, -2.0)
+				break
+			var surf: String = col.get_meta("surface", "concrete") if col else "concrete"
+			game.fx.impact(end, r.normal, surf)
+			if col and col.has_meta("glass_id"):
+				var gid: int = col.get_meta("glass_id")
+				game.map.break_glass(gid, true)            # instant locally, the server tells everyone else
+				game.send({"t": "glass", "id": gid})
+				mul *= 0.9
+			elif col and col.has_meta("light_id"):
+				var lid: int = col.get_meta("light_id")
+				game.map.shoot_light(lid, true)
+				game.send({"t": "light", "id": lid})
+				mul *= 0.9
 			else:
-				var surf: String = col.get_meta("surface", "concrete") if col else "concrete"
-				game.fx.impact(end, r.normal, surf)
 				if randf() < 0.35:
 					Sfx.play_at("impact_metal" if surf == "metal" else "impact", end, -8.0)
+				var keep: float = PENETRATION.get(surf, 0.0)
+				if keep <= 0.0 or mul * keep < 0.3:
+					break
+				mul *= keep
+			exclude.append((col as CollisionObject3D).get_rid())
+			o = end + d * 0.02
 		if i == 0:
 			first_end = end
 		if i == 0 or randf() < 0.3:
 			game.fx.tracer(muzzle_pos, end, Color(4.0, 3.0, 1.6, 0.6), 0.012)
+	for hid in heli_hits:
+		game.send({"t": "hhit", "id": hid, "w": cur, "n": heli_hits[hid], "dist": origin.distance_to(first_end)})
 	if not hits.is_empty():
 		game.send({"t": "hits", "w": cur, "hits": hits})
 	if any_hit and game.hud:
@@ -679,20 +807,28 @@ func _start_reload() -> void:
 		return
 	var w: Dictionary = ws()
 	var a: Dictionary = ammo[cur]
-	if a.mag >= w.mag or (a.res == 0):
+	if a.mag >= w.mag + (1 if _chambers(cur) and a.mag > 0 else 0) or (a.res == 0):
 		return
 	reloading = true
-	reload_total = w.reload
-	reload_t = w.reload
+	inspect_t = 0.0
+	tactical = a.mag > 0 and _chambers(cur)
+	reload_total = w.reload * (0.8 if tactical else 1.0)
+	reload_t = reload_total
 	reload_stage = 0
 	trigger_held = false
+
+
+## Magazine-fed guns keep a round in the chamber on a tactical reload (not shotguns, bolt guns, belts, rockets).
+func _chambers(w: String) -> bool:
+	var d: Dictionary = Defs.WEAPONS.get(w, {})
+	return not (w in ["shotgun", "launcher", "dmr", "lmg", "mg250"] or d.get("bolt", false))
 
 
 func _finish_reload() -> void:
 	reloading = false
 	var w: Dictionary = ws()
 	var a: Dictionary = ammo[cur]
-	var need: int = w.mag - a.mag
+	var need: int = w.mag + (1 if tactical else 0) - a.mag
 	if a.res < 0:
 		a.mag = w.mag
 	else:
@@ -823,6 +959,14 @@ func _update_viewmodel(dt: float) -> void:
 	if downed:
 		pos += Vector3(-0.02, -0.04, 0.03)
 		rot.z += 0.25
+	if inspect_t > 0.0:
+		# turn the gun towards you to look along the left side, then roll it over to the right side
+		var k := 1.0 - inspect_t / INSPECT
+		var e := sin(clamp(k * 1.25, 0.0, 1.0) * PI)
+		var side := -1.0 if k < 0.5 else 1.0
+		var blend := smoothstep(0.35, 0.65, k)
+		pos += Vector3(-0.09, 0.04, 0.06) * e
+		rot += Vector3(0.15, lerpf(0.9, -0.5, blend), lerpf(0.55, -0.9, blend) * (1.0 if side < 0 else 1.0)) * e
 	var target := Transform3D(Basis.from_euler(rot), pos)
 	vm.transform = vm.transform.interpolate_with(target, min(1.0, dt * 22.0))
 	var gun_n: Node3D = vm.get_meta("gun")
@@ -849,6 +993,8 @@ func _update_interaction() -> void:
 	var st := game.map.station_near(global_position, 2.2)
 	if not st.is_empty():
 		interact_prompt = "Press [E] to open the %s" % Defs.CAT_NAMES[st.cat]
+	elif ads > 0.9 and ws().zoom >= 2.5:
+		interact_prompt = "Breath held — %.1f s" % breath if holding_breath else ("Catching your breath…" if winded_t > 0.0 else "Hold [Shift] to hold your breath")
 
 
 func _interact() -> void:
@@ -868,15 +1014,28 @@ func _send_state(dt: float) -> void:
 	game.send_state({"t": "st", "pos": global_position, "yaw": yaw, "pitch": pitch, "cr": crouch, "cur": cur, "rev": revive_target})
 
 
+## Killed in action: follow a teammate's view from over the shoulder until the wave ends.
+## Left / right mouse switch between teammates.
 func _spectate(dt: float) -> void:
+	var alive: Array = []
 	for pn in game.player_nodes.values():
 		if pn != self and not pn.state.get("dd", true):
-			var back := Basis(Vector3.UP, pn.rotation.y) * Vector3(0, 0, 3.2)
-			cam.global_position = cam.global_position.lerp(pn.global_position + back + Vector3(0, 2.4, 0), min(1.0, dt * 4.0))
-			cam.look_at(pn.global_position + Vector3(0, 1.4, 0), Vector3.UP)
-			break
+			alive.append(pn)
 	if vm:
 		vm.visible = false
+	if alive.is_empty():
+		spec_name = ""
+		return
+	alive.sort_custom(func(x, y): return x.peer_id < y.peer_id)
+	var pn: Player = alive[posmod(spec_i, alive.size())]
+	spec_name = pn.state.get("n", "Soldier")
+	var py: float = pn.rotation.y
+	var back := Basis(Vector3.UP, py) * Vector3(0.55, 0, 2.6)
+	var want := pn.global_position + back + Vector3(0, 2.0, 0)
+	cam.global_position = cam.global_position.lerp(want, min(1.0, dt * 6.0))
+	var pitch_t: float = float(pn.state.get("pitch", 0.0))
+	var look := pn.global_position + Vector3(0, 1.5, 0) + Basis(Vector3.UP, py) * Vector3(0, sin(pitch_t) * 8.0, -8.0)
+	cam.look_at(look, Vector3.UP)
 
 
 # ======================================================================= events

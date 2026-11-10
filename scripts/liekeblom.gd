@@ -162,6 +162,10 @@ func _roads_and_areas() -> void:
 				_poly_mesh(asphalt, a.pts, 0.012)
 			"grass", "forest":
 				_poly_mesh(grass, a.pts, 0.008)
+				var gp := PackedVector2Array()
+				for q in a.pts:
+					gp.append(Vector2(q[0], q[1]))
+				m.grass_polys.append(gp)
 			"water":
 				_poly_mesh(water, a.pts, -0.25)
 				# keep people out of the canal: low invisible fence along the bank
@@ -280,8 +284,40 @@ func _mall_shell() -> void:
 	for p in d.mall.footprint:
 		poly.append(Vector2(p[0], p[1]))
 	m.minimap_polys.append([poly, Color(0.42, 0.42, 0.4, 0.75)])
+	m.indoor_polys.append(poly)
 	# floor of the whole mall
 	_poly_mesh(_floor_mat(), d.mall.footprint, 0.03)
+
+
+## Shop window glazing as separate panes (~2.5 m, between the mullions), each its own body so it can shatter.
+func _glass_panes(a: Vector3, b: Vector3, y0: float, y1: float, thick: float) -> void:
+	var L := a.distance_to(b)
+	var n := maxi(1, int(L / 2.5))
+	var dir := (b - a) / maxf(L, 0.001)
+	for k in n:
+		var p0 := a + dir * (L * k / n)
+		var p1 := a + dir * (L * (k + 1) / n)
+		var size := Vector3(thick, y1 - y0, p0.distance_to(p1) - 0.04)
+		var xf := Transform3D(Basis.looking_at(dir, Vector3.UP), (p0 + p1) * 0.5 + Vector3(0, (y0 + y1) * 0.5, 0))
+		var mi := MeshInstance3D.new()
+		var bm := BoxMesh.new()
+		bm.size = size
+		mi.mesh = bm
+		mi.material_override = _glass_mat()
+		mi.transform = xf
+		mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		m.static_root.add_child(mi)
+		var gb := StaticBody3D.new()
+		gb.collision_layer = Defs.L_WORLD
+		gb.collision_mask = 0
+		var cs := CollisionShape3D.new()
+		var sh := BoxShape3D.new()
+		sh.size = size
+		cs.shape = sh
+		gb.add_child(cs)
+		gb.transform = xf
+		m.static_root.add_child(gb)
+		m.add_glass(mi, gb, xf.origin)
 
 
 var _gm: StandardMaterial3D
@@ -341,7 +377,7 @@ func _mall_interior() -> void:
 			if p0.distance_to(p1) < 0.1:
 				continue
 			_wall(dark, p0, p1, 0.0, 0.35, 0.18)                          # plinth
-			_wall(_glass_mat(), p0, p1, 0.35, 2.9, 0.06)                  # shop window (collides)
+			_glass_panes(p0, p1, 0.35, 2.9, 0.06)                         # shop window: breakable panes
 			# mullions every ~2.5 m
 			var seg_len := p0.distance_to(p1)
 			var count := int(seg_len / 2.5)
@@ -400,6 +436,7 @@ func _shop(s: Dictionary, armory: bool) -> void:
 	light.omni_range = clamp(sqrt(float(s.area_game)) * 0.9, 6.0, 20.0)
 	light.position = c + Vector3(0, 2.7, 0)
 	m.static_root.add_child(light)
+	m.add_light(light, light.position + Vector3(0, 0.17, 0))
 	if s.door == null:
 		return
 	var door := _v(s.door)
@@ -420,6 +457,7 @@ func _shop(s: Dictionary, armory: bool) -> void:
 		fill.omni_range = 11.0
 		fill.position = back - inward * 2.5 + Vector3(0, 2.9, 0)
 		m.static_root.add_child(fill)
+		m.add_light(fill, fill.position + Vector3(0, 0.12, 0))
 		return
 	var shelf_mat := Mat.solid(Color(0.85, 0.85, 0.83), 0.6, 0.2)
 	var area: float = s.area_game
@@ -436,6 +474,7 @@ func _shop(s: Dictionary, armory: bool) -> void:
 		l2.omni_range = 20.0
 		l2.position = door + inward * 14.0 + Vector3(0, 2.7, 0)
 		m.static_root.add_child(l2)
+		m.add_light(l2, l2.position + Vector3(0, 0.17, 0))
 		return
 	if area > 60:
 		var rows := int(clamp(area / 70.0, 1, 4))
@@ -546,6 +585,7 @@ func _hall() -> void:
 		l.light_color = Color(1.0, 0.95, 0.88)
 		l.position = _v(d.mall.hall_center) + u_axis * ((k % 2) * 10.0 - 5.0) + v_axis * ((k / 2) * 10.0 - 5.0) + Vector3(0, y - 0.6, 0)
 		m.static_root.add_child(l)
+		m.add_light(l, l.position + Vector3(0, 0.2, 0))
 	# café terrace with a black railing and orange chairs, next to a flower stall (as in the real hall)
 	var hc := _v(d.mall.hall_center)
 	var black := Mat.solid(Color(0.05, 0.05, 0.05), 0.4, 0.6)

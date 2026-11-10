@@ -407,6 +407,99 @@ func _generate() -> void:
 			var b := Buf.new(0.1)
 			_tone(b, 0, 0.08, 2400, 2400, 0.3, "square")
 			return _stream(b),
+		# ---- surface footsteps (step_<surface>)
+		"step_tile": func():
+			var b := Buf.new(0.09)
+			_noise_burst(b, 0, 0.025, 0.7, 0.9, 0.5)
+			_noise_burst(b, 0.005, 0.06, 0.4, 0.25)
+			_tone(b, 0, 0.03, 1900, 1500, 0.08, "tri")
+			return _stream(b),
+		"step_grass": func():
+			var b := Buf.new(0.16)
+			_noise_burst(b, 0, 0.13, 0.5, 0.55, 0.3, 0.03, 0.6)
+			_noise_burst(b, 0.02, 0.08, 0.3, 0.12)
+			return _stream(b),
+		"step_metal": func():
+			var b := Buf.new(0.25)
+			_noise_burst(b, 0, 0.03, 0.6, 0.8, 0.4)
+			_tone(b, 0, 0.22, 420, 400, 0.25, "tri")
+			_tone(b, 0, 0.18, 1130, 1100, 0.12)
+			return _stream(b),
+		"step_wood": func():
+			var b := Buf.new(0.12)
+			_noise_burst(b, 0, 0.05, 0.6, 0.3)
+			_tone(b, 0, 0.08, 220, 160, 0.35)
+			return _stream(b),
+		"step_gravel": func():
+			var b := Buf.new(0.16)
+			for i in 9:
+				_noise_burst(b, randf_range(0.0, 0.08), 0.02, randf_range(0.2, 0.5), 0.85, 0.5)
+			_noise_burst(b, 0, 0.1, 0.4, 0.15)
+			return _stream(b),
+		"step_glass": func():
+			var b := Buf.new(0.2)
+			for i in 6:
+				_tone(b, randf_range(0, 0.06), 0.06, randf_range(3500, 6500), 3000, 0.1, "tri")
+			_noise_burst(b, 0, 0.06, 0.4, 0.3)
+			return _stream(b),
+		# ---- new threats & world
+		"rotor": func():
+			var b := Buf.new(2.0)
+			for i in 40:                                             # 20 Hz blade slap
+				_noise_burst(b, i * 0.05, 0.045, 1.0, 0.12, 0.0, 0.004, 0.8, true)
+				_tone(b, i * 0.05, 0.04, 55, 40, 0.5)
+			_noise_burst(b, 0, 2.0, 0.25, 0.5, 0.3, 0.2, 0.0)          # turbine hiss
+			return _stream(b, true),
+		"bite": func():
+			var b := Buf.new(0.35)
+			_tone(b, 0, 0.25, 180, 120, 0.6, "saw", 0.01)              # growl
+			_noise_burst(b, 0, 0.25, 0.5, 0.3, 0.0, 0.02, 0.6)
+			_noise_burst(b, 0.22, 0.05, 0.7, 0.9, 0.4)                  # snap
+			return _stream(b),
+		"laser": func():
+			var b := Buf.new(0.5)
+			for i in 3:
+				_tone(b, i * 0.14, 0.09, 2400, 2400, 0.35, "square")
+			return _stream(b),
+		"engine": func():
+			var b := Buf.new(3.2)
+			_tone(b, 0, 3.1, 48, 36, 0.6, "saw", 0.4)
+			_noise_burst(b, 0, 3.1, 0.6, 0.06, 0.0, 0.5, 0.3, true)
+			_tone(b, 2.4, 0.6, 120, 60, 0.4, "saw")                      # brakes / idle down
+			return _stream(b),
+		"door": func():
+			var b := Buf.new(0.35)
+			_noise_burst(b, 0, 0.05, 1.0, 0.3)
+			_tone(b, 0, 0.3, 90, 60, 0.8)
+			_noise_burst(b, 0.01, 0.12, 0.3, 0.7, 0.5)
+			return _stream(b),
+		"power_down": func():
+			var b := Buf.new(1.6)
+			_tone(b, 0, 1.5, 240, 35, 0.6, "saw", 0.01)
+			_noise_burst(b, 0, 0.08, 0.8, 0.9, 0.5)                      # breaker clunk
+			_tone(b, 0, 0.12, 90, 50, 0.8)
+			return _stream(b),
+		"glass": func():
+			var b := Buf.new(1.0)
+			_noise_burst(b, 0, 0.06, 1.0, 0.95, 0.4)
+			for i in 30:
+				_tone(b, randf_range(0.0, 0.6), randf_range(0.05, 0.2), randf_range(2500, 7500), randf_range(2000, 6000), randf_range(0.05, 0.2), "tri")
+			_noise_burst(b, 0.05, 0.7, 0.3, 0.8, 0.6, 0.02, 0.8)
+			return _stream(b),
+		"breath_in": func():
+			var b := Buf.new(0.6)
+			_noise_burst(b, 0, 0.55, 0.5, 0.35, 0.2, 0.25, 0.3)
+			return _stream(b),
+		"breath_out": func():
+			var b := Buf.new(0.9)
+			_noise_burst(b, 0, 0.85, 0.5, 0.25, 0.15, 0.02, 0.6)
+			return _stream(b),
+		"shield_ping": func():
+			var b := Buf.new(0.3)
+			_noise_burst(b, 0, 0.02, 0.8, 0.95, 0.6)
+			_tone(b, 0, 0.25, 2100, 1900, 0.35, "tri")
+			_tone(b, 0, 0.2, 3300, 3200, 0.15)
+			return _stream(b),
 		"ambience": func():
 			var b := Buf.new(6.0)
 			_noise_burst(b, 0, 6.0, 0.5, 0.05, 0.0, 1.5, 0.0, true)

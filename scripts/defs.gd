@@ -72,7 +72,18 @@ const ENEMIES := {
 	"shotgunner": {"name": "Breacher", "hp": 140.0, "speed": 4.0, "dmg": 20.0, "rpm": 60.0, "burst": [1, 1], "pause": [0.9, 1.3], "range": 10.0, "acc": 0.65, "reward": 80, "scale": 1.04, "head": 1.0, "gun": "shotgun"},
 	"rusher": {"name": "Rusher", "hp": 60.0, "speed": 6.2, "dmg": 24.0, "melee": true, "range": 1.7, "acc": 1.0, "reward": 60, "scale": 0.97, "head": 1.0, "gun": "knife"},
 	"heavy": {"name": "Juggernaut", "hp": 1600.0, "speed": 1.9, "dmg": 7.0, "rpm": 700.0, "burst": [10, 18], "pause": [1.0, 1.8], "range": 32.0, "acc": 0.30, "reward": 500, "scale": 1.28, "head": 0.6, "gun": "lmg"},
+	# long range, holds position, paints you with a laser before every shot
+	"sniper": {"name": "Sniper", "hp": 90.0, "speed": 2.8, "dmg": 42.0, "rpm": 30.0, "burst": [1, 1], "pause": [3.0, 4.5], "range": 95.0, "acc": 0.7, "reward": 130, "scale": 1.0, "head": 1.0, "gun": "dmr", "sniper": true, "aim": 1.5},
+	# ballistic shield: frontal hits are absorbed, flank it or use explosives
+	"shield": {"name": "Riot Shield", "hp": 200.0, "speed": 2.7, "dmg": 9.0, "rpm": 380.0, "burst": [2, 3], "pause": [1.0, 1.8], "range": 16.0, "acc": 0.38, "reward": 140, "scale": 1.04, "head": 1.0, "gun": "pistol", "shield": true},
+	# lobs grenades at anyone holding still
+	"grenadier": {"name": "Grenadier", "hp": 115.0, "speed": 3.0, "dmg": 6.0, "rpm": 420.0, "burst": [2, 3], "pause": [1.2, 2.0], "range": 26.0, "acc": 0.28, "reward": 110, "scale": 1.0, "head": 1.0, "gun": "ar", "nades": true},
+	# attack dog: fast, low and hard to hit
+	"dog": {"name": "Attack Dog", "hp": 55.0, "speed": 7.6, "dmg": 15.0, "melee": true, "range": 1.5, "acc": 1.0, "reward": 70, "scale": 1.0, "head": 1.0, "gun": "none", "dog": true},
 }
+
+## Enemy transport helicopter: drops a squad, door gunner, can be shot down.
+const HELI := {"hp": 2600.0, "reward": 1000, "troops": 5, "dmg": 6.0}
 
 ## `after` = number of completed waves before the item unlocks.
 const SHOP := [
@@ -99,6 +110,7 @@ const SHOP := [
 	{"id": "e_mine", "cat": "equipment", "name": "Claymores x2", "desc": "Place with 4 (max 4)", "price": 700, "after": 4},
 	{"id": "e_revive", "cat": "equipment", "name": "Self-Revive Kit", "desc": "Get back up once when downed", "price": 1500, "after": 4},
 	{"id": "e_harmor", "cat": "equipment", "name": "Heavy Armor", "desc": "250 armor plate carrier", "price": 2000, "after": 6},
+	{"id": "e_nvg", "cat": "equipment", "name": "Night Vision", "desc": "Toggle with N — for night waves and power cuts", "price": 1500, "after": 3},
 	{"id": "e_turret", "cat": "equipment", "name": "Sentry Gun", "desc": "Auto-turret, place with 5, lasts 90s", "price": 2500, "after": 6},
 
 	{"id": "a_strike", "cat": "air", "name": "Precision Airstrike", "desc": "Line of bombs on your marker (6)", "price": 2000, "after": 4},

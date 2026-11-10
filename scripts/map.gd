@@ -35,6 +35,15 @@ var static_root: Node3D
 var _merge := {}               # Material -> SurfaceTool
 var sun: DirectionalLight3D
 var env: Environment
+# breakable glass panes and shootable lights (ids are indices; identical on every peer)
+var glass: Array = []          # {mesh: MeshInstance3D, body: StaticBody3D, c: Vector3, broken: bool}
+var lights: Array = []         # {l: Light3D, e: float, fix: MeshInstance3D, mat: Material, body, out: bool, street: bool}
+var power_on := true
+var street_level := 0.0        # 0 = street lamps off (day) .. 1 = fully on (dusk / night)
+var emergency: Array = []      # red emergency lights during a power cut
+var indoor_polys: Array = []   # PackedVector2Array (x, z) footprints that count as indoors (mall)
+var grass_polys: Array = []
+var _dark_fix: StandardMaterial3D
 
 
 func _box(kind: String, cx: float, cz: float, w: float, d: float, h: float, y0 := 0.0, extra := {}) -> Dictionary:
@@ -426,9 +435,10 @@ func _build_box(b: Dictionary) -> void:
 				_merge_box(Mat.solid(Color(0.3, 0.3, 0.3), 0.5, 0.8), size, c)
 			var l := OmniLight3D.new()
 			l.light_color = Color(1.0, 0.85, 0.65)
-			l.light_energy = 0.0   # daytime: off. (Set >0 for a night map.)
+			l.omni_range = 16.0
 			l.position = Vector3(c.x, 5.9, c.z)
 			static_root.add_child(l)
+			add_light(l, l.position + Vector3(0, 0.25, 0), 1.8, true)   # comes on at dusk
 	if add_collision:
 		_collider(b)
 
@@ -706,7 +716,183 @@ func _bake_nav() -> void:
 	nav_region.bake_navigation_mesh(false)
 
 
+# ---------------------------------------------------------------- glass, lights, power
+## Register a light with a small shootable fixture above it. `street` lamps follow the time of day.
+func add_light(l: Light3D, fixture: Vector3, energy := -1.0, street := false) -> void:
+	var id := lights.size()
+	var mat := Mat.emissive(l.light_color, 2.5)
+	var mi := MeshInstance3D.new()
+	var bm := BoxMesh.new()
+	bm.size = Vector3(0.6, 0.06, 0.6) if not street else Vector3(0.45, 0.12, 0.45)
+	mi.mesh = bm
+	mi.material_override = mat
+	mi.position = fixture
+	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	static_root.add_child(mi)
+	var body := StaticBody3D.new()
+	body.collision_layer = Defs.L_WORLD
+	body.collision_mask = 0
+	body.set_meta("surface", "glass")
+	body.set_meta("light_id", id)
+	var cs := CollisionShape3D.new()
+	var sh := BoxShape3D.new()
+	sh.size = bm.size + Vector3(0.1, 0.1, 0.1)
+	cs.shape = sh
+	body.add_child(cs)
+	body.position = fixture
+	static_root.add_child(body)
+	lights.append({"l": l, "e": l.light_energy if energy < 0.0 else energy, "fix": mi, "mat": mat, "body": body, "out": false, "street": street})
+	_apply_light(id)
+
+
+func _apply_light(i: int) -> void:
+	var L: Dictionary = lights[i]
+	var on: bool = not L.out and power_on and (not L.street or street_level > 0.01)
+	var k: float = street_level if L.street else 1.0
+	(L.l as Light3D).light_energy = L.e * k if on else 0.0
+	if _dark_fix == null:
+		_dark_fix = Mat.solid(Color(0.12, 0.12, 0.12), 0.3, 0.5)
+	(L.fix as MeshInstance3D).material_override = L.mat if on else _dark_fix
+
+
+## Shop windows etc.: each pane is its own body so it can shatter.
+func add_glass(mesh: MeshInstance3D, body: StaticBody3D, center: Vector3) -> void:
+	body.set_meta("glass_id", glass.size())
+	body.set_meta("surface", "glass")
+	glass.append({"mesh": mesh, "body": body, "c": center, "broken": false})
+
+
+func glass_near(pos: Vector3, r: float) -> Array:
+	var out := []
+	for i in glass.size():
+		if not glass[i].broken and (glass[i].c as Vector3).distance_to(pos) < r:
+			out.append(i)
+	return out
+
+
+func _fx() -> Effects:
+	var g = get_parent()
+	return g.fx if g and "fx" in g else null
+
+
+func break_glass(id: int, effects: bool) -> void:
+	if id < 0 or id >= glass.size() or glass[id].broken:
+		return
+	var G: Dictionary = glass[id]
+	G.broken = true
+	(G.mesh as MeshInstance3D).visible = false
+	(G.body as StaticBody3D).collision_layer = 0
+	if effects and _fx():
+		var c: Vector3 = G.c
+		for k in 26:
+			_fx().particle(false, c + Vector3(randf_range(-0.9, 0.9), randf_range(-0.9, 0.9), randf_range(-0.9, 0.9)) * 0.9,
+				Vector3(randf_range(-2, 2), randf_range(0, 2.5), randf_range(-2, 2)), 0.06, 0.0, 1.2, Color(0.75, 0.85, 0.9, 0.8), 14.0, 0.3)
+		Sfx.play_at("glass", c, 0.0, randf_range(0.9, 1.1))
+
+
+func shoot_light(id: int, effects: bool) -> void:
+	if id < 0 or id >= lights.size() or lights[id].out:
+		return
+	lights[id].out = true
+	_apply_light(id)
+	if effects and _fx():
+		var c: Vector3 = (lights[id].fix as MeshInstance3D).global_position
+		for k in 12:
+			_fx().particle(true, c, Vector3(randf_range(-2, 2), randf_range(-1, 1), randf_range(-2, 2)), 0.05, 0.0, 0.5, Color(4, 3.4, 2.2, 1), 9.0, 0.5)
+		Sfx.play_at("glass", c, -6.0, 1.4)
+
+
+func set_power(on: bool) -> void:
+	if power_on == on:
+		return
+	power_on = on
+	for i in lights.size():
+		_apply_light(i)
+	if emergency.is_empty():
+		var spots: Array = []
+		for st in stations:
+			spots.append((st.pos as Vector3) + Vector3(0, 3.0, 0))
+		for e in get_meta("entrances", []):
+			spots.append(Vector3(e[0], 2.6, e[1]))
+		if not player_spawns.is_empty():
+			spots.append((player_spawns[0] as Vector3) + Vector3(0, 4.0, 0))
+		for p in spots:
+			var l := OmniLight3D.new()
+			l.light_color = Color(1.0, 0.12, 0.06)
+			l.omni_range = 9.0
+			l.light_energy = 0.0
+			l.position = p
+			static_root.add_child(l)
+			emergency.append(l)
+	for l in emergency:
+		(l as OmniLight3D).light_energy = 0.0 if on else 1.2
+
+
+func set_street_level(k: float) -> void:
+	if abs(k - street_level) < 0.02:
+		return
+	street_level = k
+	for i in lights.size():
+		if lights[i].street:
+			_apply_light(i)
+
+
+func restore() -> void:
+	for i in glass.size():
+		if glass[i].broken:
+			glass[i].broken = false
+			(glass[i].mesh as MeshInstance3D).visible = true
+			(glass[i].body as StaticBody3D).collision_layer = Defs.L_WORLD
+	for i in lights.size():
+		lights[i].out = false
+	set_power(true)
+	for i in lights.size():
+		_apply_light(i)
+
+
+func _process(_dt: float) -> void:
+	if not power_on and not emergency.is_empty():
+		var k := 0.6 + 0.6 * absf(sin(Time.get_ticks_msec() / 1000.0 * 2.2))
+		for l in emergency:
+			(l as OmniLight3D).light_energy = k
+
+
 # ---------------------------------------------------------------- queries
+## Is this point under a roof? (mall footprint on De Liekeblom, a roof overhead on the yard)
+func indoor_at(pos: Vector3) -> bool:
+	if not indoor_polys.is_empty():
+		for poly in indoor_polys:
+			if Geometry2D.is_point_in_polygon(Vector2(pos.x, pos.z), poly):
+				return true
+		return false
+	var q := PhysicsRayQueryParameters3D.create(pos + Vector3(0, 1.0, 0), pos + Vector3(0, 14.0, 0), Defs.L_WORLD)
+	return not get_world_3d().direct_space_state.intersect_ray(q).is_empty()
+
+
+## Footstep sound set for where a player stands: "" = plain pavement / concrete.
+func step_surface(pos: Vector3) -> String:
+	for g in glass:
+		if g.broken and Vector2(g.c.x - pos.x, g.c.z - pos.z).length() < 1.4:
+			return "glass"
+	var q := PhysicsRayQueryParameters3D.create(pos + Vector3(0, 0.3, 0), pos - Vector3(0, 0.5, 0), Defs.L_WORLD)
+	var r := get_world_3d().direct_space_state.intersect_ray(q)
+	var surf: String = r.collider.get_meta("surface", "concrete") if r and r.collider else "concrete"
+	match surf:
+		"metal":
+			return "metal"
+		"wood":
+			return "wood"
+		"dirt", "ground":
+			return "gravel"
+	if map_id == "liekeblom":
+		if indoor_at(pos):
+			return "tile"
+		for poly in grass_polys:
+			if Geometry2D.is_point_in_polygon(Vector2(pos.x, pos.z), poly):
+				return "grass"
+	return ""
+
+
 func station_near(pos: Vector3, radius := 1.7) -> Dictionary:
 	for st in stations:
 		var p: Vector3 = st.pos + (st.facing as Vector3) * 1.6

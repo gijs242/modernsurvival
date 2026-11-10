@@ -62,6 +62,7 @@ func _register_inputs() -> void:
 		"jump": [KEY_SPACE], "sprint": [KEY_SHIFT], "crouch": [KEY_C, KEY_CTRL], "reload": [KEY_R], "weapon1": [KEY_1], "weapon2": [KEY_2],
 		"frag": [KEY_G], "melee": [KEY_V], "interact": [KEY_E], "ready": [KEY_F], "mine": [KEY_4], "turret": [KEY_5],
 		"strike": [KEY_6], "drone": [KEY_7], "carpet": [KEY_8], "scoreboard": [KEY_TAB], "pause": [KEY_ESCAPE, KEY_P], "fullscreen": [KEY_F11],
+		"inspect": [KEY_T], "nvg": [KEY_N],
 	}
 	for a in keys:
 		if not InputMap.has_action(a):
@@ -235,7 +236,7 @@ func _build_menu() -> void:
 	_row(v, "Field of view", _slider("fov", 60, 100, 1, 78))
 	_row(v, "Volume", _slider("volume", 0, 1, 0.05, 0.8, func(x): Sfx.set_volume(x)))
 	status_lbl = _lbl(v, "", 16, Color(0.6, 0.85, 0.6))
-	var keys := _lbl(v, "WASD move · Shift sprint · Space jump · C crouch · LMB fire · RMB aim · R reload · 1/2 weapons\nG frag · V melee · E armory/revive · F ready · 4 claymore · 5 sentry · 6 airstrike · 7 gunship · 8 carpet · Tab squad", 14, Color(0.55, 0.55, 0.55))
+	var keys := _lbl(v, "WASD move · Shift sprint · Space jump · C crouch · LMB fire · RMB aim · R reload · 1/2 weapons\nG frag · V melee · E armory/revive · F ready · T inspect · N night vision · Shift (scoped) hold breath\n4 claymore · 5 sentry · 6 airstrike · 7 gunship · 8 carpet · Tab squad", 14, Color(0.55, 0.55, 0.55))
 	keys.autowrap_mode = TextServer.AUTOWRAP_WORD
 	var q := Button.new()
 	q.text = "QUIT"
@@ -629,7 +630,7 @@ func _autotest(dt: float) -> void:
 		if d < bd:
 			bd = d
 			best = e
-	if best:
+	if best and not Net.args.has("pacifist"):
 		var to := best.global_position + Vector3(0, 1.3, 0) - lp.cam.global_position
 		lp.yaw = atan2(-to.x, -to.z)
 		lp.pitch = atan2(to.y, Vector2(to.x, to.z).length())
@@ -640,12 +641,25 @@ func _autotest(dt: float) -> void:
 		lp._try_fire()
 		_at_fired += 1
 	var f := Engine.get_process_frames()
-	if f % 600 == 100: lp._throw()
-	if f % 900 == 200: game.send({"t": "mine"})
-	if f % 1200 == 300: game.send({"t": "turret"})
-	if f % 1500 == 400: game.send({"t": "strike", "k": "strike", "pos": Vector3(0, 0, -30)})
-	if f % 1800 == 500: game.send({"t": "drone"})
-	if f % 2400 == 600: game.send({"t": "strike", "k": "carpet"})
+	var g := 1 if Net.args.has("pacifist") else f      # pacifist: no grenades / support either
+	if g % 600 == 100: lp._throw()
+	if g % 900 == 200: game.send({"t": "mine"})
+	if g % 1200 == 300: game.send({"t": "turret"})
+	if g % 1500 == 400: game.send({"t": "strike", "k": "strike", "pos": Vector3(0, 0, -30)})
+	if g % 1800 == 500: game.send({"t": "drone"})
+	if g % 2400 == 600: game.send({"t": "strike", "k": "carpet"})
+	if f % 300 == 0 and game.is_server:
+		var mix := {}
+		for e in game.enemies.values():
+			var k: String = e.type + ("/cover" if e.mode == Enemy.IN_COVER else "/tocover" if e.mode == Enemy.TO_COVER else "/flank" if e.role == "flank" else "")
+			mix[k] = int(mix.get(k, 0)) + 1
+			if Net.args.has("pacifist"):
+				mix[k + "@"] = "%d%s/%s" % [e.global_position.distance_to(lp.global_position), "L" if e.los else "", e.st]
+		var efr := 0
+		for pr in game.projectiles.values():
+			if pr.k == "efrag": efr += 1
+		print("[autotest] enemy grenades thrown=%d in_air=%d camp=%.0f" % [game.nades_thrown, efr, game.P.get(game.local_id, {}).get("camp_t", 0.0)])
+		print("[autotest] mix=%s helis=%d glass_broken=%d lights_out=%d power=%s special=%s" % [mix, game.helis.size(), game.glass_broken.size(), game.lights_out.size(), game.power, game.special])
 	if f % 300 == 0:
 		print("[autotest:%s] t=%.0fs wave=%d state=%s enemies=%d kills=%d money=%d shots=%d fps=%d" % [Net.mode, _at_elapsed, game.snap.get("wave", 0), game.snap.get("state", "?"), game.enemies.size(), p.get("kills", p.get("k", 0)), p.get("money", p.get("m", 0)), _at_fired, Engine.get_frames_per_second()])
 	if _at_elapsed >= autotest_t:

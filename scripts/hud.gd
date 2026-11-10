@@ -673,6 +673,21 @@ func _process(dt: float) -> void:
 			eq += "  [color=#7cc0ff]SELF-REVIVE[/color]"
 		equip_lbl.text = eq + "[/right]"
 		prompt.text = lp.interact_prompt
+		# incoming enemy grenade
+		var nade := ""
+		for pr in s.get("proj", []):
+			if pr[1] == "efrag" and (pr[2] as Vector3).distance_to(lp.global_position) < 8.0:
+				var to: Vector3 = pr[2] - lp.global_position
+				var ang := wrapf(atan2(-to.x, -to.z) - lp.yaw, -PI, PI)
+				nade = "⚠  GRENADE  " + ("↑" if abs(ang) < 0.6 else "↓" if abs(ang) > 2.5 else ("←" if ang > 0 else "→"))
+		if nade != "":
+			prompt.text = nade
+			prompt.add_theme_color_override("font_color", Color(1.0, 0.35, 0.25))
+		else:
+			prompt.add_theme_color_override("font_color", Color.WHITE)
+		if int(me.get("nv", 0)) > 0:
+			eq += "  [color=#7dff8a]N  NVG %s[/color]" % ("ON" if lp.nvg_on else "")
+			equip_lbl.text = eq + "[/right]"
 		designate_lbl.visible = lp.designating != ""
 		scope.visible = lp.scope_view()
 		cross.visible = lp.ads < 0.5 and not scope.visible
@@ -692,7 +707,7 @@ func _process(dt: float) -> void:
 		if me.get("dn", false):
 			downed_lbl.text = "YOU ARE DOWN\n%s %ds" % ["Self-revive in" if me.get("sr", 0) > 0 else "Bleeding out —", ceili(me.get("dt", 0.0))]
 		elif me.get("dd", false):
-			downed_lbl.text = "KILLED IN ACTION\nYou will redeploy when the wave ends"
+			downed_lbl.text = "KILLED IN ACTION — redeploying when the wave ends" + ("\nSpectating %s   ·   [LMB] / [RMB] switch" % lp.spec_name if lp.spec_name != "" else "")
 		else:
 			downed_lbl.text = ""
 	# announce fade
