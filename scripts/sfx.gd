@@ -92,6 +92,23 @@ func play(name: String, vol_db := 0.0, pitch := 1.0, var_pitch := 0.06) -> void:
 	p.play()
 
 
+## Weapon shot: new guns reuse the closest synthesised voice at a different pitch; suppressed = quiet & thin.
+const GUN_VOICE := {"m9": ["pistol", 1.05], "m1911": ["pistol", 0.82], "ak47": ["ar", 0.88], "l85": ["ar", 1.08],
+	"g3a3": ["lmg", 0.92], "scar": ["ar", 0.9], "mosin": ["dmr", 0.9], "svd": ["dmr", 1.08], "mg250": ["lmg", 0.95]}
+
+func play_gun(id: String, pos = null, quiet := false) -> void:
+	var v: Array = GUN_VOICE.get(id, [id if streams.has(id) else "ar", 1.0])
+	var name: String = v[0]
+	if streams.has(id):
+		name = id
+	var vol := -16.0 if quiet else (0.0 if pos != null else -1.0)
+	var pitch: float = v[1] * (1.6 if quiet else 1.0)
+	if pos == null:
+		play(name, vol, pitch, 0.04)
+	else:
+		play_at(name, pos, vol, pitch)
+
+
 func play_at(name: String, pos: Vector3, vol_db := 0.0, pitch := 1.0, max_dist := 220.0) -> void:
 	var s: AudioStream = streams.get(name)
 	if s == null:

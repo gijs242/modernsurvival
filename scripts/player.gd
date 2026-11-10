@@ -36,6 +36,8 @@ var vm_view: SubViewportContainer
 var vm_root: Node3D       # follows camera
 var vm: Node3D            # current viewmodel
 var vm_cache := {}
+var vm_key := ""
+var force_ads := -1.0      # tests: hold aim-down-sights
 var muzzle_light: OmniLight3D
 var shape: CollisionShape3D
 var yaw := 0.0
@@ -79,6 +81,21 @@ var fov := 78.0
 var hp_prev := 100
 var heartbeat_t := 0.0
 var flash_t := 0.0
+
+
+# ======================================================================= stats with attachments
+func atts_of(w: String) -> Dictionary:
+	return (state.get("at", {}) as Dictionary).get(w, {})
+
+
+func ws(w := "") -> Dictionary:
+	if w == "":
+		w = cur
+	return Defs.stats(w, atts_of(w))
+
+
+func scope_view() -> bool:
+	return ws().get("scope", false) and ads > 0.92 and designating == ""
 
 
 # ======================================================================= setup
@@ -182,6 +199,10 @@ func apply_state(ps: Dictionary, now: float) -> void:
 	state = ps
 	if is_local:
 		_sync_weapons(ps.w)
+		if vm and designating == "" and vm_key != cur + str(atts_of(cur)):
+			_set_viewmodel(cur)
+			if ammo.has(cur):
+				ammo[cur].mag = min(ammo[cur].mag, ws().mag)
 		downed = ps.dn
 		dead = ps.dd
 		if ps.tp and tp_guard <= 0.0:
@@ -212,7 +233,7 @@ func apply_state(ps: Dictionary, now: float) -> void:
 func _sync_weapons(list: Array) -> void:
 	for w in list:
 		if not ammo.has(w):
-			var d: Dictionary = Defs.WEAPONS[w]
+			var d: Dictionary = ws(w)
 			ammo[w] = {"mag": d.mag, "res": d.reserve}
 	for w in ammo.keys():
 		if not w in list:
@@ -254,7 +275,7 @@ func _unhandled_input(ev: InputEvent) -> void:
 	if not is_local or not _input_enabled():
 		return
 	if ev is InputEventMouseMotion and Input.mouse_mode == Input.MOUSE_MODE_CAPTURED:
-		var zoom := lerpf(1.0, Defs.WEAPONS[cur].zoom, ads)
+		var zoom := lerpf(1.0, ws().zoom, ads)
 		var s := 0.0022 * sens / zoom
 		yaw -= ev.relative.x * s
 		pitch = clamp(pitch - ev.relative.y * s, -1.5, 1.5)
@@ -266,7 +287,7 @@ func _unhandled_input(ev: InputEvent) -> void:
 		trigger_held = true
 		if designating != "":
 			_call_strike()
-		elif not Defs.WEAPONS[cur].auto:
+		elif not ws().auto:
 			_try_fire()
 	if ev.is_action_released("fire"):
 		trigger_held = false
@@ -323,11 +344,13 @@ func _local_frame(dt: float) -> void:
 	if dead:
 		_spectate(dt)
 		return
-	var w: Dictionary = Defs.WEAPONS[cur]
+	var w: Dictionary = ws()
 	var input_ok := _input_enabled() and Input.mouse_mode == Input.MOUSE_MODE_CAPTURED
 	# ADS
 	var want_ads: bool = input_ok and Input.is_action_pressed("aim") and not sprinting and not reloading and designating == "" and swap_t <= 0.0
-	ads = move_toward(ads, 1.0 if want_ads else 0.0, dt * (6.0 if cur != "dmr" else 4.5))
+	ads = move_toward(ads, 1.0 if want_ads else 0.0, dt * (4.5 if ws().get("scope", false) else 6.0))
+	if force_ads >= 0.0:
+		ads = force_ads
 	# weapon timers
 	fire_cd -= dt
 	swap_t = max(0.0, swap_t - dt)
@@ -378,7 +401,7 @@ func _move(dt: float, input_ok: bool) -> void:
 	if Settings.get_val("crouch_hold", false):
 		crouch = input_ok and Input.is_action_pressed("crouch")
 	crouch_k = move_toward(crouch_k, 1.0 if crouch else 0.0, dt * 6.0)
-	var w: Dictionary = Defs.WEAPONS[cur]
+	var w: Dictionary = ws()
 	var speed := WALK
 	if sprinting:
 		speed = SPRINT
@@ -425,7 +448,7 @@ func _update_camera(dt: float) -> void:
 	var sh := Vector3(randf_range(-1, 1), randf_range(-1, 1), 0) * shake * 0.06
 	cam.position = Vector3(0, eye_h, 0) + bob + sh
 	cam.rotation = Vector3(pitch + recoil.y + flinch.y + sh.y, yaw + recoil.x + flinch.x, sh.x * 0.5)
-	var zoom := lerpf(1.0, Defs.WEAPONS[cur].zoom, ads)
+	var zoom := lerpf(1.0, ws().zoom, ads)
 	cam.fov = lerpf(cam.fov, (fov / zoom) + (6.0 if sprinting else 0.0), min(1.0, dt * 12.0))
 	vm_cam.global_transform = cam.global_transform
 	vm_root.global_transform = cam.global_transform
@@ -452,9 +475,11 @@ func _equip(w: String, instant := false) -> void:
 func _set_viewmodel(w: String) -> void:
 	if vm:
 		vm.visible = false
-	if not vm_cache.has(w):
-		vm_cache[w] = _build_vm(w)
-	vm = vm_cache[w]
+	var key := w + str(atts_of(w))
+	if not vm_cache.has(key):
+		vm_cache[key] = _build_vm(w)
+	vm = vm_cache[key]
+	vm_key = key
 	vm.visible = true
 
 
@@ -462,6 +487,8 @@ func _build_vm(w: String) -> Node3D:
 	var root := Node3D.new()
 	var gun := WeaponModel.build(w)
 	root.add_child(gun)
+	if w != "designator":
+		WeaponModel.add_attachments(gun, w, atts_of(w))
 	var sleeve := Mat.pbr("fabric", Color(0.38, 0.39, 0.35), 0.95, 0.0, 3.0)
 	var glove := Mat.pbr("fabric", Color(0.36, 0.31, 0.23), 0.9, 0.0, 4.0)
 	var cap := func(r: float, h: float) -> CapsuleMesh:
@@ -539,7 +566,7 @@ func _try_fire() -> void:
 		return
 	if dead or (downed and cur != "pistol") or game.snap.get("state", "") == "over":
 		return
-	var w: Dictionary = Defs.WEAPONS[cur]
+	var w: Dictionary = ws()
 	var a: Dictionary = ammo[cur]
 	if a.mag <= 0:
 		Sfx.play("dry", -6.0)
@@ -552,8 +579,9 @@ func _try_fire() -> void:
 	var origin := cam.global_position
 	var fwd := -cam.global_transform.basis.z
 	var muzzle_pos := _muzzle_world()
-	Sfx.play(cur, -1.0, 1.0, 0.04)
-	_muzzle_fx(muzzle_pos, fwd)
+	Sfx.play_gun(cur, null, w.get("quiet", false))
+	if not w.get("quiet", false):
+		_muzzle_fx(muzzle_pos, fwd)
 	# recoil & kick
 	var rec: float = w.recoil * (0.6 if ads > 0.5 else 1.0) * (0.8 if crouch else 1.0)
 	recoil.y += rec * 0.028                                  # camera kick (recovers)
@@ -606,14 +634,14 @@ func _try_fire() -> void:
 		game.hud.hitmarker(head_hit, false)
 		Sfx.play("hit_head" if head_hit else "hit", -2.0, 1.0, 0.03)
 	if multiplayer.get_peers().size() > 0:
-		game.send({"t": "fire", "w": cur, "o": muzzle_pos, "e": first_end})
+		game.send({"t": "fire", "w": cur, "o": muzzle_pos, "e": first_end, "q": w.get("quiet", false)})
 	# shell casing
 	if cur != "launcher" and cur != "shotgun" or (cur == "shotgun" and false):
 		var right := cam.global_transform.basis.x
 		game.fx.casing(muzzle_pos - fwd * 0.45 + right * 0.08, right * randf_range(1.6, 2.6) + Vector3.UP * randf_range(1.5, 2.5) - fwd * 0.3)
 		if randf() < 0.4:
 			get_tree().create_timer(0.35).timeout.connect(func(): Sfx.play("casing", -18.0))
-	if cur == "shotgun" or cur == "dmr":
+	if cur == "shotgun" or w.get("bolt", false) or cur == "dmr":
 		get_tree().create_timer(0.3).timeout.connect(func(): Sfx.play("pump" if cur == "shotgun" else "bolt", -8.0))
 	if a.mag == 0:
 		get_tree().create_timer(0.2).timeout.connect(_start_reload)
@@ -649,7 +677,7 @@ func _muzzle_fx(pos: Vector3, fwd: Vector3) -> void:
 func _start_reload() -> void:
 	if reloading or designating != "" or not ammo.has(cur):
 		return
-	var w: Dictionary = Defs.WEAPONS[cur]
+	var w: Dictionary = ws()
 	var a: Dictionary = ammo[cur]
 	if a.mag >= w.mag or (a.res == 0):
 		return
@@ -662,7 +690,7 @@ func _start_reload() -> void:
 
 func _finish_reload() -> void:
 	reloading = false
-	var w: Dictionary = Defs.WEAPONS[cur]
+	var w: Dictionary = ws()
 	var a: Dictionary = ammo[cur]
 	var need: int = w.mag - a.mag
 	if a.res < 0:
@@ -735,19 +763,23 @@ func _update_viewmodel(dt: float) -> void:
 	var adsp: Vector3 = ADS.get(w, Vector3(0, -0.11, -0.25))
 	if (vm.get_meta("gun") as Node3D).has_meta("custom"):
 		hip = Vector3(0.13, -0.105, -0.3) if w != "launcher" else Vector3(0.16, -0.12, -0.15)
-		adsp = {"shotgun": Vector3(0, 0, -0.16), "launcher": Vector3(0, 0, -0.1), "dmr": Vector3(0, 0, -0.1), "lmg": Vector3(0, 0, -0.14)}.get(w, Vector3(0, 0, -0.2))
+		adsp = {"shotgun": Vector3(0, 0, -0.16), "launcher": Vector3(0, 0, -0.1), "dmr": Vector3(0, 0, -0.1), "lmg": Vector3(0, 0, -0.14),
+			"pistol": Vector3(0, 0, -0.34), "m9": Vector3(0, 0, -0.34), "m1911": Vector3(0, 0, -0.34), "l85": Vector3(0, 0, -0.06),
+			"mosin": Vector3(0, 0, -0.12), "svd": Vector3(0, 0, -0.12), "mg250": Vector3(0, 0, -0.14)}.get(w, Vector3(0, 0, -0.2))
+		if ws(w).get("pistol", false) or w == "pistol":
+			hip = Vector3(0.13, -0.11, -0.36)
 	var pos := hip.lerp(adsp, ads)
 	var rot := Vector3.ZERO
 	var hv := Vector2(velocity.x, velocity.z).length()
-	var bob_amt: float = clamp(hv / 6.0, 0.0, 1.3) * (1.0 - ads * 0.9) * (1.0 if is_on_floor() else 0.2)
+	var bob_amt: float = clamp(hv / 6.0, 0.0, 1.3) * (1.0 - ads) * (1.0 if is_on_floor() else 0.2)
 	pos += Vector3(sin(bob_t * 1.4) * 0.012, -abs(cos(bob_t * 1.4)) * 0.012, 0) * bob_amt
 	# idle breathing
-	pos.y += sin(game.time * 1.6) * 0.0018 * (1.0 - ads * 0.8)
+	pos.y += sin(game.time * 1.6) * 0.0018 * (1.0 - ads)
 	sway = sway.lerp(Vector2.ZERO, min(1.0, dt * 8.0))
-	pos.x -= sway.x * 0.6 * (1.0 - ads * 0.8)
-	pos.y += sway.y * 0.6 * (1.0 - ads * 0.8)
-	rot.y += sway.x * 2.0
-	rot.x += sway.y * 2.0
+	pos.x -= sway.x * 0.6 * (1.0 - ads)
+	pos.y += sway.y * 0.6 * (1.0 - ads)
+	rot.y += sway.x * 2.0 * (1.0 - ads)
+	rot.x += sway.y * 2.0 * (1.0 - ads)
 	kick = lerpf(kick, 0.0, min(1.0, dt * 11.0))
 	pos.z += kick * 0.05
 	pos.y += kick * 0.008
@@ -797,7 +829,7 @@ func _update_viewmodel(dt: float) -> void:
 	if gun_n.has_meta("reticle"):
 		(gun_n.get_meta("reticle") as Sprite3D).visible = ads > 0.6
 	# scope: hide the gun when fully scoped in on the DMR
-	vm.visible = not (cur == "dmr" and ads > 0.92 and designating == "")
+	vm.visible = not scope_view()
 
 
 # ======================================================================= interaction
@@ -880,13 +912,13 @@ func on_buy(e: Dictionary) -> void:
 		return
 	if e.has("weapon"):
 		var w: String = e.weapon
-		ammo[w] = {"mag": Defs.WEAPONS[w].mag, "res": Defs.WEAPONS[w].reserve}
+		ammo[w] = {"mag": ws(w).mag, "res": ws(w).reserve}
 		if e.get("dropped", "") != "":
 			ammo.erase(e.dropped)
 		_equip(w)
 	if e.get("ammo", false):
 		for w in ammo:
-			ammo[w].res = Defs.WEAPONS[w].reserve
+			ammo[w].res = ws(w).reserve
 			if w == "launcher":
 				ammo[w].mag = 1
 

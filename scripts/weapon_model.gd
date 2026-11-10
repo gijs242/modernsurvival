@@ -288,3 +288,134 @@ static func _custom(id: String) -> Node3D:
 			root.set_meta("mag_pos", mag.position)
 		return root
 	return null
+
+
+# ============================================================================ attachments
+## Adds attachment meshes to a weapon node built by build(). Optics are centred on the sight line
+## (y = 0 for converted models), so aiming down sights through them lines up exactly.
+static func add_attachments(gun: Node3D, weapon: String, atts: Dictionary) -> void:
+	if atts.is_empty():
+		return
+	_mats()
+	var metal := _gun_mat("gun_metal")
+	var poly := _gun_mat("gun_polymer")
+	var custom := gun.has_meta("custom")
+	var pistol: bool = Defs.WEAPONS.get(weapon, {}).get("pistol", false) or weapon == "pistol"
+	var muzzle: Node3D = gun.get_meta("muzzle")
+	var grip_l: Vector3 = gun.get_meta("grip_l", Vector3(0, -0.04, -0.3))
+	var sight_y := 0.0 if custom else 0.11
+	var optic_z := -0.05 if pistol else -0.1
+	for slot in atts:
+		var id: String = atts[slot]
+		var a := Node3D.new()
+		a.name = "Att_" + slot
+		gun.add_child(a)
+		match id:
+			"reddot":
+				a.position = Vector3(0, sight_y, optic_z)
+				_cyl_z(a, metal, 0.017, 0.045, Vector3.ZERO)
+				_box(a, metal, Vector3(0.022, 0.03, 0.04), Vector3(0, -0.028, 0))
+				_lens(a, 0.015, Vector3(0, 0, -0.02))
+				_dot(a, 0.0015, Vector3(0, 0, -0.01))
+			"holo":
+				a.position = Vector3(0, sight_y, optic_z)
+				_box(a, poly, Vector3(0.042, 0.016, 0.085), Vector3(0, -0.03, 0.01))
+				for x in [-0.019, 0.019]:
+					_box(a, poly, Vector3(0.006, 0.042, 0.03), Vector3(x, -0.004, -0.02))
+				_box(a, poly, Vector3(0.044, 0.006, 0.03), Vector3(0, 0.018, -0.02))
+				_lens(a, 0.018, Vector3(0, 0, -0.02))
+				var r := Sprite3D.new()
+				r.texture = _reticle_tex()
+				r.pixel_size = 0.00012
+				r.shaded = false
+				r.modulate = Color(3.0, 0.25, 0.15)
+				r.position = Vector3(0, 0, -0.025)
+				a.add_child(r)
+			"acog":
+				a.position = Vector3(0, sight_y, optic_z + 0.02)
+				_cyl_z(a, metal, 0.019, 0.12, Vector3.ZERO)
+				_cyl_z(a, metal, 0.023, 0.03, Vector3(0, 0, -0.07))
+				_cyl_z(a, metal, 0.02, 0.02, Vector3(0, 0, 0.065))
+				_box(a, metal, Vector3(0.03, 0.03, 0.08), Vector3(0, -0.03, 0))
+				_lens(a, 0.02, Vector3(0, 0, -0.086))
+			"sniper_scope":
+				a.position = Vector3(0, sight_y, optic_z + 0.03)
+				_cyl_z(a, metal, 0.015, 0.26, Vector3.ZERO)
+				_cyl_z(a, metal, 0.025, 0.07, Vector3(0, 0, -0.15))
+				_cyl_z(a, metal, 0.02, 0.05, Vector3(0, 0, 0.14))
+				_box(a, metal, Vector3(0.02, 0.022, 0.02), Vector3(0, 0.02, 0))
+				_box(a, metal, Vector3(0.022, 0.02, 0.02), Vector3(0.02, 0, 0))
+				for z in [-0.06, 0.07]:
+					_box(a, metal, Vector3(0.026, 0.035, 0.018), Vector3(0, -0.028, z))
+				_lens(a, 0.024, Vector3(0, 0, -0.186))
+			"suppressor":
+				var len := 0.12 if pistol else 0.17
+				a.position = muzzle.position + Vector3(0, 0, -len * 0.5)
+				_cyl_z(a, metal, 0.017 if pistol else 0.02, len, Vector3.ZERO)
+				_cyl_z(a, metal, 0.012, 0.01, Vector3(0, 0, -len * 0.5))
+				muzzle.position += Vector3(0, 0, -len)
+			"compensator":
+				a.position = muzzle.position + Vector3(0, 0, -0.025)
+				_cyl_z(a, metal, 0.016, 0.05, Vector3.ZERO)
+				for k in 3:
+					_box(a, _gun_mat("gun_polymer"), Vector3(0.034, 0.004, 0.006), Vector3(0, 0.0, -0.015 + k * 0.012))
+				muzzle.position += Vector3(0, 0, -0.05)
+			"foregrip":
+				a.position = grip_l + Vector3(0, -0.055, 0)
+				var c := MeshInstance3D.new()
+				var cm := CapsuleMesh.new()
+				cm.radius = 0.017
+				cm.height = 0.1
+				c.mesh = cm
+				c.material_override = poly
+				a.add_child(c)
+				gun.set_meta("grip_l", grip_l + Vector3(0, -0.07, 0.01))
+			"laser":
+				var lp: Vector3 = (muzzle.position + Vector3(0.0, -0.035, 0.12)) if pistol else (grip_l + Vector3(0.028, 0.0, -0.04))
+				a.position = lp
+				_box(a, poly, Vector3(0.024, 0.024, 0.06), Vector3.ZERO)
+				_box(a, Mat.emissive(Color(1, 0.05, 0.02), 8.0), Vector3(0.008, 0.008, 0.002), Vector3(0, 0, -0.031))
+			"ext_mag":
+				var mag: Node3D = gun.get_meta("mag")
+				if mag:
+					mag.scale.y *= 1.45
+					mag.position.y -= 0.03
+					gun.set_meta("mag_pos", mag.position)
+				else:
+					_box(a, metal, Vector3(0.03, 0.07, 0.06), Vector3(0, -0.12, -0.06))
+	for n in gun.find_children("*", "GeometryInstance3D", true, false):
+		(n as GeometryInstance3D).cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+
+
+static func _cyl_z(p: Node3D, m: Material, r: float, length: float, pos: Vector3) -> MeshInstance3D:
+	var mi := _cyl(p, m, r, length, pos, 20)
+	return mi
+
+
+static func _lens(p: Node3D, r: float, pos: Vector3) -> void:
+	var g := StandardMaterial3D.new()
+	g.albedo_color = Color(0.3, 0.45, 0.5, 0.18)
+	g.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	g.metallic = 0.9
+	g.roughness = 0.02
+	var mi := MeshInstance3D.new()
+	var cm := CylinderMesh.new()
+	cm.top_radius = r
+	cm.bottom_radius = r
+	cm.height = 0.002
+	mi.mesh = cm
+	mi.material_override = g
+	mi.rotation.x = PI / 2
+	mi.position = pos
+	p.add_child(mi)
+
+
+static func _dot(p: Node3D, r: float, pos: Vector3) -> void:
+	var s := SphereMesh.new()
+	s.radius = r
+	s.height = r * 2.0
+	var mi := MeshInstance3D.new()
+	mi.mesh = s
+	mi.material_override = Mat.emissive(Color(1.0, 0.08, 0.04), 10.0)
+	mi.position = pos
+	p.add_child(mi)

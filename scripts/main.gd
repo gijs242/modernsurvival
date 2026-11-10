@@ -396,7 +396,7 @@ func _start_game() -> void:
 	game.hud = hud
 	ui.add_child(hud)
 	ui.move_child(hud, 0)
-	game.setup(int(Settings.get_val("quality", 2)), Net.map_id)
+	game.setup(int(Net.args.get("quality", Settings.get_val("quality", 2))), Net.map_id)
 	game.game_over.connect(_on_game_over)
 	Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
 
@@ -626,6 +626,9 @@ var _st_fail := 0
 var _st_enemy: Enemy
 var _st_body: Soldier
 var _st_pitch := 0.0
+var _st_weapons: Array = []
+var _st_wi := 0
+var _st_next := 0.0
 
 func _st_check(name: String, ok: bool, detail := "") -> void:
 	print("[selftest] %s %s %s" % ["PASS" if ok else "FAIL", name, detail])
@@ -711,5 +714,67 @@ func _selftest(dt: float) -> void:
 		10:
 			if _st_t > 17.0:
 				_st_check("corpse disappears after ~12 s", not is_instance_valid(_st_body))
+				_st_weapons = Defs.WEAPONS.keys()
+				_st_step = 11
+				_st_next = _st_t
+		11:
+			# aim down sights with every weapon: the gun's sight line must hit the exact screen centre
+			if _st_t >= _st_next:
+				if _st_wi > 0:
+					var gun: Node3D = lp.vm.get_meta("gun")
+					var cam := lp.vm_cam
+					var centre := cam.get_viewport().get_visible_rect().size * 0.5
+					var pt := cam.unproject_position(gun.global_transform * Vector3(0, 0 if gun.has_meta("custom") else 0.11, -1.5))
+					var err := pt.distance_to(centre)
+					_st_check("sight line centred: %s" % _st_weapons[_st_wi - 1], err < 2.0 or lp.scope_view(), "error=%.2f px%s" % [err, " (scoped)" if lp.scope_view() else ""])
+				if _st_wi >= _st_weapons.size():
+					lp.force_ads = -1.0
+					_st_step = 12
+					return
+				var w: String = _st_weapons[_st_wi]
+				p.weapons = ["pistol", w] if w != "pistol" else ["pistol"]
+				lp.state["w"] = p.weapons
+				lp._sync_weapons(p.weapons)
+				lp._equip(w, true)
+				lp.force_ads = 1.0
+				lp.velocity = Vector3.ZERO
+				_st_wi += 1
+				_st_next = _st_t + 0.8
+		12:
+			# gunsmith: buy a red dot for the AK, it must be fitted, centred and change stats
+			game.cleared = 15
+			p.money = 50000
+			p.weapons = ["pistol", "ak47"]
+			lp._sync_weapons(p.weapons)
+			lp._equip("ak47", true)
+			game.send({"t": "buy_att", "w": "ak47", "a": "reddot"})
+			game.send({"t": "buy_att", "w": "ak47", "a": "foregrip"})
+			_st_step = 13
+			_st_next = _st_t + 1.0
+		13:
+			if _st_t >= _st_next:
+				var att: Dictionary = p.att.get("ak47", {})
+				_st_check("gunsmith fits a red dot + foregrip", att.get("optic", "") == "reddot" and att.get("under", "") == "foregrip", str(att))
+				_st_check("foregrip lowers recoil", lp.ws("ak47").recoil < Defs.WEAPONS.ak47.recoil, "%.2f vs %.2f" % [lp.ws("ak47").recoil, Defs.WEAPONS.ak47.recoil])
+				lp.force_ads = 1.0
+				_st_step = 14
+				_st_next = _st_t + 0.8
+		14:
+			if _st_t >= _st_next:
+				var gun: Node3D = lp.vm.get_meta("gun")
+				var dot := gun.find_child("Att_optic", true, false) as Node3D
+				var cam := lp.vm_cam
+				var centre := cam.get_viewport().get_visible_rect().size * 0.5
+				var err := 999.0
+				if dot:
+					err = cam.unproject_position(dot.global_position + (gun.global_transform.basis * Vector3(0, 0, -0.01))).distance_to(centre)
+				_st_check("red dot visible on the gun and centred when aiming", dot != null and err < 3.0, "error=%.2f px" % err)
+				game.send({"t": "buy_att", "w": "ak47", "a": "acog"})
+				_st_step = 15
+				_st_next = _st_t + 1.0
+		15:
+			if _st_t >= _st_next:
+				_st_check("ACOG switches to a magnified scope view", lp.scope_view(), "zoom=%.1f" % lp.ws().zoom)
+				lp.force_ads = -1.0
 				print("[selftest] DONE failures=%d" % _st_fail)
 				get_tree().quit(_st_fail)

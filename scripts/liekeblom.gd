@@ -40,6 +40,7 @@ func build(map: GameMap) -> void:
 	_hall()
 	_boundary()
 	_gameplay_points()
+	Dressing.new().run(m, d, body)
 
 
 # ------------------------------------------------------------------ helpers
@@ -139,15 +140,15 @@ func _ground() -> void:
 	plane.size = Vector2(1200, 1200)
 	var mi := MeshInstance3D.new()
 	mi.mesh = plane
-	mi.material_override = Mat.world("sidewalk", Color(0.82, 0.8, 0.77), 0.3)
+	mi.material_override = Mat.world("sidewalk", Color(0.95, 0.95, 0.95), 0.5, 1.0, 0.0, 0.0)
 	m.static_root.add_child(mi)
 
 
 func _roads_and_areas() -> void:
-	var asphalt := Mat.world("asphalt", Color(0.6, 0.6, 0.6), 0.2)
-	var bricks := Mat.world("klinkers", Color(0.9, 0.85, 0.82), 0.45)
-	var cycle := Mat.world("asphalt", Color(0.75, 0.32, 0.27), 0.2)
-	var grass := Mat.world("dirt", Color(0.42, 0.55, 0.28), 0.25)
+	var asphalt := Mat.world("asphalt", Color(0.85, 0.85, 0.85), 0.25, 1.0, 0.0, 0.0)
+	var bricks := Mat.world("klinkers", Color(1.1, 1.05, 1.0), 0.6, 1.0, 0.0, 0.0)
+	var cycle := Mat.world("asphalt", Color(1.0, 0.45, 0.38), 0.25, 1.0, 0.0, 0.0)
+	var grass := Mat.world("grass", Color(1, 1, 1), 0.4, 1.0, 0.0, 0.0)
 	var water := StandardMaterial3D.new()
 	water.albedo_color = Color(0.12, 0.17, 0.16)
 	water.metallic = 0.3
@@ -181,17 +182,17 @@ func _roads_and_areas() -> void:
 
 
 func _buildings() -> void:
-	var wall_mats := [Mat.world("bricks", Color(0.78, 0.55, 0.45), 0.33), Mat.world("bricks", Color(0.62, 0.42, 0.34), 0.33),
-		Mat.world("bricks", Color(0.9, 0.82, 0.72), 0.33), Mat.world("plaster", Color(0.88, 0.86, 0.82), 0.25)]
-	var roof_mats := [Mat.world("roof_dark", Color(0.85, 0.85, 0.85), 0.5), Mat.world("roof_red", Color(0.9, 0.9, 0.9), 0.5)]
-	var flat := Mat.world("gravel", Color(0.55, 0.55, 0.53), 0.4)
+	var wall_mats := [Mat.world("bricks", Color(1, 1, 1), 0.5), Mat.world("bricks", Color(0.82, 0.74, 0.7), 0.5),
+		Mat.world("bricks", Color(1.15, 1.05, 0.95), 0.5), Mat.world("plaster", Color(0.95, 0.93, 0.9), 0.35)]
+	var roof_mats := [Mat.world("roof_dark", Color(0.9, 0.9, 0.9), 0.5, 1.0, 0.0, 0.0), Mat.world("roof_red", Color(1, 1, 1), 0.5, 1.0, 0.0, 0.0)]
+	var flat := Mat.world("gravel", Color(0.8, 0.8, 0.8), 0.4, 1.0, 0.0, 0.0)
 	var glass := StandardMaterial3D.new()
 	glass.albedo_color = Color(0.75, 0.85, 0.9, 0.18)
 	glass.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
 	glass.metallic = 0.5
 	glass.roughness = 0.05
 	glass.cull_mode = BaseMaterial3D.CULL_DISABLED
-	var mall_wall := Mat.world("bricks", Color(0.7, 0.5, 0.42), 0.33)
+	var mall_wall := Mat.world("bricks", Color(0.9, 0.85, 0.8), 0.5)
 	var faces := PackedVector3Array()
 	for b in d.buildings:
 		var h := String(b.id).hash()
@@ -238,7 +239,7 @@ func _tri_mesh(mat: Material, arr: Array, faces: PackedVector3Array, shadows := 
 
 # ------------------------------------------------------------------ mall
 func _mall_shell() -> void:
-	var outer := Mat.world("bricks", Color(0.7, 0.5, 0.42), 0.33)
+	var outer := Mat.world("bricks", Color(0.9, 0.85, 0.8), 0.5)
 	var gf: float = d.ground_floor_h
 	for s in d.mall.shell:
 		var a := _v(s.a)
@@ -280,22 +281,18 @@ func _glass_mat() -> StandardMaterial3D:
 	return _gm
 
 
-var _fm: StandardMaterial3D
-func _floor_mat() -> StandardMaterial3D:
+var _fm: Material
+func _floor_mat() -> Material:
 	if _fm == null:
-		_fm = Mat.world("mall_floor", Color(0.9, 0.9, 0.9), 0.75, 0.25).duplicate()
-		_fm.roughness = 0.18
-		_fm.uv1_world_triplanar = true
-		var r := theta
-		_fm.uv1_offset = Vector3.ZERO
+		_fm = Mat.world("mall_floor", Color(0.93, 0.93, 0.93), 0.75, 0.22, 0.0, 0.0, false)
 	return _fm
 
 
 func _mall_interior() -> void:
-	var plaster := Mat.world("plaster", Color(0.93, 0.92, 0.9), 0.3)
+	var plaster := Mat.world("plaster", Color(1.0, 1.0, 0.98), 0.35, 1.0, 0.0, 0.25)
 	var dark := Mat.solid(Color(0.14, 0.15, 0.17), 0.45, 0.5)
 	var frame := Mat.solid(Color(0.12, 0.2, 0.42), 0.4, 0.6)
-	var ceiling := Mat.world("plaster", Color(0.95, 0.95, 0.95), 0.6)
+	var ceiling := Mat.world("plaster", Color(1.05, 1.05, 1.05), 0.6, 1.0, 0.0, 0.0)
 	var white := Mat.solid(Color(0.92, 0.92, 0.9), 0.35, 0.1)
 	var shop_by_id := {}
 	for s in d.mall.shops:
@@ -399,8 +396,8 @@ func _shop(s: Dictionary, armory: bool) -> void:
 		var depth: float = (c - door).dot(inward)
 		var back: Vector3 = door + inward * clampf(depth * 1.35, 3.5, 7.0)
 		var i := 0
-		for cat in ["weapons", "equipment", "air"]:
-			var pos := back + side * (float(i - 1) * 3.6)
+		for cat in ["weapons", "gunsmith", "equipment", "air"]:
+			var pos := back + side * (float(i) - 1.5) * 3.2
 			m.stations.append({"cat": cat, "pos": pos, "facing": -inward, "label": Defs.CAT_NAMES[cat]})
 			i += 1
 		return

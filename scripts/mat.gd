@@ -12,18 +12,29 @@ static func _tex(path: String) -> Texture2D:
 	return null
 
 
-## World-space triplanar material for level geometry: no UVs needed, texture density is uniform.
-## `scale` = texture repeats per metre.
-static func world(name: String, tint := Color.WHITE, scale := 0.25, rough := 1.0, metal := 0.0) -> StandardMaterial3D:
-	var key := "w:%s:%s:%s:%s:%s" % [name, tint.to_html(), scale, rough, metal]
+## World-space material for level geometry (custom shader: triplanar, anti-tiling, weathering, grime).
+## `scale` = texture repeats per metre. `grime` = height in metres of dirt at the base of walls (0 = none).
+static var _world_shader: Shader
+
+static func world(name: String, tint := Color.WHITE, scale := 0.5, rough := 1.0, metal := 0.0, grime := 1.1, anti_tile := true) -> Material:
+	var key := "w:%s:%s:%s:%s:%s:%s:%s" % [name, tint.to_html(), scale, rough, metal, grime, anti_tile]
 	if _cache.has(key):
 		return _cache[key]
-	var m := pbr(name, tint, rough, metal)
-	m = m.duplicate()
-	m.uv1_triplanar = true
-	m.uv1_world_triplanar = true
-	m.uv1_triplanar_sharpness = 6.0
-	m.uv1_scale = Vector3.ONE * scale
+	if _world_shader == null:
+		_world_shader = load("res://scripts/world_pbr.gdshader")
+	var base := "res://assets/textures/%s/" % name
+	var m := ShaderMaterial.new()
+	m.shader = _world_shader
+	for pair in [["albedo_tex", "albedo.jpg"], ["normal_tex", "normal.jpg"], ["rough_tex", "roughness.jpg"], ["ao_tex", "ao.jpg"]]:
+		var t := _tex(base + pair[1])
+		if t:
+			m.set_shader_parameter(pair[0], t)
+	m.set_shader_parameter("tint", tint)
+	m.set_shader_parameter("scale", scale)
+	m.set_shader_parameter("rough_mult", rough)
+	m.set_shader_parameter("metallic", metal)
+	m.set_shader_parameter("grime_height", grime)
+	m.set_shader_parameter("anti_tiling", anti_tile)
 	_cache[key] = m
 	return m
 

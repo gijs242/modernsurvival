@@ -38,6 +38,29 @@ WEAPONS = [
      "drop": ["bolt_b", "bullet"], "rot_z": 90, "length": 1.15, "grip": 0.3, "hand": 0.55,
      "sight": {"object": "scope", "z_frac": 0.55}},
     {"id": "frag", "src": "mk2_grenade/mk2_grenade.glb", "grenade": True},
+    # ---- calibrated iron sights (front post + rear sight tops on the centre line)
+    {"id": "pistol", "src": "polyhaven/service_pistol/service_pistol.gltf", "keep": ["=service_pistol_pistol_a", "=service_pistol_slide_a", "=service_pistol_hammer_a", "=service_pistol_trigger_a"],
+     "auto": True, "length": 0.216, "grip": 0.3, "hand": 0.3, "irons": {"front": (0.86, 0.99), "rear": (0.0, 0.16)}, "pistol": True},
+    {"id": "m9", "src": "fpsweapons/FPSWeapons.blend", "keep": ["=M9 Pistol"], "auto": True,
+     "length": 0.217, "grip": 0.3, "hand": 0.3, "irons": {"front": (0.86, 0.99), "rear": (0.0, 0.16)}, "mats": "auto", "pistol": True},
+    {"id": "m1911", "src": "smallarms/m1911.blend", "auto": True, "length": 0.216, "grip": 0.3, "hand": 0.3,
+     "irons": {"front": (0.86, 0.99), "rear": (0.0, 0.16)}, "mats": "auto", "pistol": True},
+    {"id": "ak47", "src": "smallarms/ak47.blend", "auto": True, "length": 0.88, "grip": 0.32, "hand": 0.6,
+     "irons": {"front": (0.8, 0.95), "rear": (0.42, 0.56)}, "mats": "auto"},
+    {"id": "l85", "src": "smallarms/l85.blend", "auto": True, "length": 0.785, "grip": 0.52, "hand": 0.75,
+     "irons": {"front": (0.55, 0.9), "rear": (0.2, 0.5)}, "mats": "auto"},
+    {"id": "g3a3", "src": "smallarms/g3a3.blend", "auto": True, "length": 1.025, "grip": 0.3, "hand": 0.6,
+     "irons": {"front": (0.82, 0.95), "rear": (0.25, 0.42)}, "mats": "auto"},
+    {"id": "scar", "src": "fpsweapons/FPSWeapons.blend", "keep": ["=Scar", "=Scar magazine", "=EOTech"], "mag": "Scar magazine",
+     "length": 0.98, "length_of": "Scar", "grip": 0.33, "hand": 0.66, "sight": {"object": "EOTech", "z_frac": 0.62},
+     "mats": {"*": "gun_metal", "EOTech": "gun_polymer"}, "pre": "eotech_on:Scar"},
+    {"id": "mosin", "src": "smallarms/mosin9130.blend", "auto": True, "length": 1.23, "grip": 0.25, "hand": 0.55,
+     "irons": {"front": (0.9, 0.99), "rear": (0.38, 0.55)}, "mats": "auto"},
+    {"id": "svd", "src": "smallarms/dragunov.blend", "auto": True, "length": 1.225, "grip": 0.3, "hand": 0.58,
+     "irons": {"front": (0.85, 0.97), "rear": (0.3, 0.55)}, "mats": "auto"},
+    {"id": "mg250", "src": "mgm250/MGM250.blend", "drop": ["Bullet"], "auto": True, "length": 1.12, "grip": 0.36, "hand": 0.62,
+     "mats": {"*": "gun_metal"},
+     "irons": {"front": (0.75, 0.93), "rear": (0.3, 0.5)}},
 ]
 
 
@@ -113,6 +136,80 @@ def empty(name, pos):
     return e
 
 
+def auto_orient():
+    """Longest axis -> +Y (muzzle = thinner end), grip/magazine hanging down (-Z)."""
+    mn, mx = bounds()
+    size = mx - mn
+    ax = max(range(3), key=lambda i: size[i])
+    if ax == 0:
+        transform_all(Matrix.Rotation(math.radians(90), 4, "Z"))
+    elif ax == 2:
+        transform_all(Matrix.Rotation(math.radians(-90), 4, "X"))
+    mn, mx = bounds()
+    L = mx.y - mn.y
+
+    def extent(vs):
+        if not vs:
+            return 0.0
+        return (max(v.z for v in vs) - min(v.z for v in vs)) + (max(v.x for v in vs) - min(v.x for v in vs))
+    front = verts_in(mx.y - L * 0.06, mx.y)
+    back = verts_in(mn.y, mn.y + L * 0.06)
+    if extent(back) < extent(front):
+        transform_all(Matrix.Rotation(math.radians(180), 4, "Z"))
+        mn, mx = bounds()
+    tip = verts_in(mx.y - L * 0.04, mx.y)
+    bz = sum(v.z for v in tip) / max(1, len(tip))
+    if (mx.z - bz) > (bz - mn.z):
+        transform_all(Matrix.Rotation(math.radians(180), 4, "Y"))
+
+
+def auto_materials():
+    """Untextured models: classify each material by colour into gun_metal / gun_wood / gun_polymer."""
+    for o in meshes():
+        for slot in o.material_slots:
+            m = slot.material
+            if m is None:
+                continue
+            c = m.diffuse_color
+            if m.use_nodes and "Principled BSDF" in m.node_tree.nodes:
+                c = m.node_tree.nodes["Principled BSDF"].inputs["Base Color"].default_value
+            r, g, b = c[0], c[1], c[2]
+            lum = 0.3 * r + 0.59 * g + 0.11 * b
+            if r > g * 1.12 and r > b * 1.4 and lum > 0.12:
+                name = "gun_wood"
+            elif lum > 0.85:
+                name = "gun_sight"
+            elif lum < 0.3:
+                name = "gun_metal"
+            else:
+                name = "gun_polymer" if abs(r - g) < 0.05 and abs(g - b) < 0.05 else "gun_metal"
+            nm = bpy.data.materials.get(name) or bpy.data.materials.new(name)
+            nm.use_nodes = True
+            slot.material = nm
+
+
+def calibrate_irons(cfg, bore_x):
+    """Tilt the gun so the line rear-sight-top -> front-post-top is level; return (x, z) of that line."""
+    ir = cfg["irons"]
+    mn, mx = bounds()
+    L = mx.y - mn.y
+
+    def top(f0, f1):
+        vs = [v for v in verts_in(mn.y + L * f0, mn.y + L * f1) if abs(v.x - bore_x) < max(0.006, L * 0.012)]
+        if not vs:
+            vs = verts_in(mn.y + L * f0, mn.y + L * f1)
+        best = max(vs, key=lambda v: v.z)
+        return Vector((bore_x, best.y, best.z))
+    f = top(*ir["front"])
+    r = top(*ir["rear"])
+    r.z -= ir.get("rear_drop", 0.002 if cfg.get("pistol") else 0.004)
+    ang = math.atan2(f.z - r.z, f.y - r.y)
+    pivot = Matrix.Translation(r) @ Matrix.Rotation(-ang, 4, "X") @ Matrix.Translation(-r)
+    transform_all(pivot)
+    print(f"  irons: rear {tuple(round(v, 3) for v in r)} front {tuple(round(v, 3) for v in f)} tilt {math.degrees(ang):.2f} deg")
+    return bore_x, r.z
+
+
 def set_material_names(cfg):
     mats = cfg.get("mats")
     if not mats:
@@ -176,6 +273,26 @@ def convert(cfg):
         transform_all(rot.inverted())
     else:
         bake_all()
+    if cfg.get("pre", "").startswith("eotech_on:"):
+        host = bpy.data.objects[cfg["pre"].split(":")[1]]
+        for o in meshes():
+            if o.name == "EOTech":
+                mn, mx = bounds([o])
+                cmn, cmx = bounds([host])
+                c = (mn + mx) / 2
+                rail_y = cmn.y + (cmx.y - cmn.y) * 0.42
+                near = [v.co.z for v in host.data.vertices if abs(v.co.y - rail_y) < 0.15]
+                top = max(near) if near else cmx.z
+                o.data.transform(Matrix.Translation((-c.x + (cmn.x + cmx.x) / 2, rail_y - c.y, top - mn.z - 0.005)))
+                bm = bmesh.new()
+                bm.from_mesh(o.data)
+                emn, emx = bounds([o])
+                h, wdt = emx.z - emn.z, emx.x - emn.x
+                dead = [f for f in bm.faces if abs(f.normal.y) > 0.6 and abs(f.calc_center_median().x - (emn.x + emx.x) / 2) < wdt * 0.36
+                        and emn.z + h * 0.42 < f.calc_center_median().z < emn.z + h * 0.92]
+                bmesh.ops.delete(bm, geom=dead, context="FACES")
+                bm.to_mesh(o.data)
+                bm.free()
     if cfg.get("pre") == "m4":
         # The magazine ships raised out of the magwell (2x scale model); seat it.
         for o in meshes():
@@ -202,6 +319,19 @@ def convert(cfg):
                 bm.to_mesh(o.data)
                 bm.free()
                 print("EOTech window faces removed:", len(dead))
+    if cfg.get("seat_mag"):
+        mag = [o for o in meshes() if o.name.lower() == cfg["mag"].lower()][0]
+        body = [o for o in meshes() if o is not mag]
+        mmn, mmx = bounds([mag])
+        under = [v.co.z for o in body for v in o.data.vertices if mmn.y <= v.co.y <= mmx.y and mmn.x - 0.2 <= v.co.x <= mmx.x + 0.2]
+        if under:
+            mag.data.transform(Matrix.Translation((0, 0, min(under) - mmn.z + 0.01 * (mmx.z - mmn.z))))
+    if cfg.get("auto"):
+        auto_orient()
+    if cfg.get("mats") == "auto":
+        auto_materials()
+        cfg = dict(cfg)
+        cfg.pop("mats")
     if cfg.get("pre") == "bolt":
         transform_all(Matrix(((0, 0, 1, 0), (1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 0, 1))))   # X->Y, Y->Z, Z->X
     if cfg.get("rot_z"):
@@ -254,9 +384,15 @@ def convert(cfg):
     bore_z = sum(p.z for p in tip) / len(tip)
     bore_x = sum(p.x for p in tip) / len(tip)
     # sight line height
-    sc = cfg["sight"]
+    sc = cfg.get("sight", {})
     sight_x = bore_x
-    if "object" in sc:
+    if "irons" in cfg:
+        sight_x, sight_z = calibrate_irons(cfg, bore_x)
+        mn, mx = bounds()
+        L = mx.y - mn.y
+        tip = verts_in(mx.y - L * 0.03, mx.y)
+        bore_z = sum(p.z for p in tip) / len(tip)
+    elif "object" in sc:
         so = [o for o in meshes() if sc["object"].lower() in o.name.lower()]
         smn, smx = bounds(so)
         sight_z = smn.z + (smx.z - smn.z) * sc["z_frac"]

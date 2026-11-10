@@ -145,7 +145,8 @@ func _init_player(p: Dictionary, idx: int) -> void:
 	p.merge({"pos": s, "yaw": 0.0, "pitch": 0.0, "cr": false, "hp": 100.0, "armor": 0.0, "money": Defs.START_MONEY,
 		"weapons": ["pistol"], "cur": "pistol", "frags": 2, "mines": 0, "turrets": 0, "self_revive": 0, "strikes": 0,
 		"drones": 0, "carpets": 0, "downed": false, "dead": false, "down_t": 0.0, "rev_p": 0.0, "rev": 0, "last_dmg": -99.0,
-		"kills": 0, "heads": 0, "earned": 0, "downs": 0, "combo": 0, "combo_t": 0.0, "ready": false, "flawless": true, "tp": 1}, true)
+		"kills": 0, "heads": 0, "earned": 0, "downs": 0, "combo": 0, "combo_t": 0.0, "ready": false, "flawless": true, "tp": 1,
+		"att": {}}, true)
 
 
 func _add_player(id: int, name: String) -> void:
@@ -253,6 +254,8 @@ func _handle(id: int, m: Dictionary) -> void:
 				ev({"t": "announce", "text": "GUNSHIP ON STATION", "sub": "Called in by %s" % p.name, "snd": "radio"})
 		"buy":
 			_buy(p, str(m.get("item", "")))
+		"buy_att":
+			_buy_att(p, str(m.get("w", "")), str(m.get("a", "")))
 		"ready":
 			if state == "inter":
 				p.ready = true
@@ -276,6 +279,33 @@ func _add_projectile(k: String, o: Vector3, v: Vector3, fuse: float, owner: int)
 func _add_strike(center: Vector3, ang: float, delay: float, owner: int, count: int, spacing: float) -> void:
 	strikes.append({"pos": center, "ang": ang, "t": delay, "n": 0, "count": count, "spacing": spacing, "gap": 0.0, "owner": owner})
 	ev({"t": "strike_mark", "pos": center, "ang": ang, "delay": delay, "len": count * spacing})
+
+
+func _buy_att(p: Dictionary, wid: String, aid: String) -> void:
+	var a: Dictionary = Defs.ATTACH.get(aid, {})
+	var fail := func(why: String): ev({"t": "buy", "to": p.id, "ok": false, "why": why})
+	if a.is_empty() or p.dead or p.downed:
+		return
+	if not wid in p.weapons:
+		fail.call("You don't own that weapon")
+		return
+	if not Defs.attach_fits(wid, aid):
+		fail.call("Doesn't fit this weapon")
+		return
+	if cleared < a.after:
+		fail.call("Locked")
+		return
+	var cur: Dictionary = p.att.get(wid, {})
+	if cur.get(a.slot, "") == aid:
+		fail.call("Already fitted")
+		return
+	if p.money < a.price:
+		fail.call("Not enough cash")
+		return
+	p.money -= a.price
+	cur[a.slot] = aid
+	p.att[wid] = cur
+	ev({"t": "buy", "to": p.id, "ok": true, "item": aid, "name": "%s on %s" % [a.name, Defs.WEAPONS[wid].name], "price": a.price, "att": aid, "w": wid})
 
 
 func _buy(p: Dictionary, item_id: String) -> void:
@@ -349,6 +379,7 @@ func _buy(p: Dictionary, item_id: String) -> void:
 					var idx: int = max(0, p.weapons.find(p.cur))
 					dropped = p.weapons[idx]
 					p.weapons[idx] = w
+					p.att.erase(dropped)
 				else:
 					p.weapons.append(w)
 				p.cur = w
@@ -364,7 +395,7 @@ func _player_hits(p: Dictionary, m: Dictionary) -> void:
 	var wid: String = m.get("w", "")
 	if p.dead or (p.downed and wid != "pistol") or not Defs.WEAPONS.has(wid) or not wid in p.weapons:
 		return
-	var w: Dictionary = Defs.WEAPONS[wid]
+	var w: Dictionary = Defs.stats(wid, p.att.get(wid, {}))
 	var per := {}
 	var hits: Array = m.get("hits", [])
 	for h in hits.slice(0, 12):
@@ -772,7 +803,7 @@ func _snapshot() -> Dictionary:
 		pl.append({"id": p.id, "n": p.name, "p": p.pos, "yaw": p.yaw, "pitch": p.pitch, "cr": p.cr, "hp": ceili(p.hp), "ar": ceili(p.armor),
 			"m": p.money, "w": p.weapons.duplicate(), "cur": p.cur, "fr": p.frags, "mi": p.mines, "tu": p.turrets, "sr": p.self_revive,
 			"as": p.strikes, "dr": p.drones, "cb": p.carpets, "dn": p.downed, "dd": p.dead, "dt": p.down_t, "rp": p.rev_p,
-			"k": p.kills, "h": p.heads, "e": p.earned, "rd": p.ready, "co": p.combo, "tp": p.tp})
+			"k": p.kills, "h": p.heads, "e": p.earned, "rd": p.ready, "co": p.combo, "tp": p.tp, "at": p.att.duplicate(true)})
 	var en := []
 	for e in enemies.values():
 		en.append([e.id, e.type, e.global_position, e.rotation.y, roundi(100.0 * e.hp / e.max_hp), e.st, e.moving])
@@ -1024,9 +1055,10 @@ func _on_shot(e: Dictionary, lp: Player) -> void:
 						fx.impact(end, (o - end).normalized(), "concrete")
 			else:
 				var pn: Player = player_nodes.get(e.pid)
-				if pn and pn.model: pn.model.muzzle_flash()
-				Sfx.play_at(w if Sfx.streams.has(w) else "ar", o, 0.0)
-				fx.tracer(o, end)
+				if pn and pn.model and not e.get("q", false): pn.model.muzzle_flash()
+				Sfx.play_gun(w, o, e.get("q", false))
+				if not e.get("q", false):
+					fx.tracer(o, end)
 
 
 func _on_kill(e: Dictionary) -> void:

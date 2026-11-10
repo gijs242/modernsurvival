@@ -16,9 +16,10 @@ const SPAWNS := [Vector3(0, 0, -51), Vector3(0, 0, 51), Vector3(-51, 0, 0), Vect
 	Vector3(2, 0, -48), Vector3(-2, 0, 48), Vector3(-48, 0, 2), Vector3(48, 0, -2)]
 const PLAYER_SPAWNS := [Vector3(0, 0, 4), Vector3(2.5, 0, 5), Vector3(-2.5, 0, 5), Vector3(0, 0, 7)]
 const STATIONS := [
-	{"cat": "weapons", "pos": Vector3(-4.6, 0, -25.1), "label": "WEAPON ARMORY"},
-	{"cat": "equipment", "pos": Vector3(0, 0, -25.1), "label": "EQUIPMENT ARMORY"},
-	{"cat": "air", "pos": Vector3(4.6, 0, -25.1), "label": "AIR SUPPORT ARMORY"},
+	{"cat": "weapons", "pos": Vector3(-5.4, 0, -25.1), "label": "WEAPON ARMORY"},
+	{"cat": "gunsmith", "pos": Vector3(-1.8, 0, -25.1), "label": "GUNSMITH"},
+	{"cat": "equipment", "pos": Vector3(1.8, 0, -25.1), "label": "EQUIPMENT ARMORY"},
+	{"cat": "air", "pos": Vector3(5.4, 0, -25.1), "label": "AIR SUPPORT ARMORY"},
 ]
 
 var boxes: Array = []          # {kind, min:Vector3, max:Vector3, ...}
@@ -335,14 +336,14 @@ func _build_ground() -> void:
 	yard.size = Vector2(HALF * 2 + 2, HALF * 2 + 2)
 	var ym := MeshInstance3D.new()
 	ym.mesh = yard
-	ym.material_override = Mat.world("asphalt", Color(0.72, 0.71, 0.69), 0.22)
+	ym.material_override = Mat.world("asphalt", Color(0.85, 0.85, 0.85), 0.25, 1.0, 0.0, 0.0)
 	ym.position.y = 0.002
 	static_root.add_child(ym)
 	var outer := PlaneMesh.new()
 	outer.size = Vector2(1200, 1200)
 	var om := MeshInstance3D.new()
 	om.mesh = outer
-	om.material_override = Mat.world("dirt", Color(0.95, 0.9, 0.82), 0.18)
+	om.material_override = Mat.world("dirt", Color(1, 1, 1), 0.3, 1.0, 0.0, 0.0)
 	static_root.add_child(om)
 	# Painted lines
 	var paint := Mat.solid(Color(0.78, 0.68, 0.32), 0.7)
@@ -376,7 +377,7 @@ func _build_box(b: Dictionary) -> void:
 			_merge_box(Mat.world("concrete", Color(0.5, 0.5, 0.48), 0.3), size, c)
 		"building":
 			var tint: Color = [Color(0.92, 0.88, 0.8), Color(1, 1, 1), Color(0.82, 0.8, 0.76), Color(0.9, 0.85, 0.78)][b.tint]
-			var mat := Mat.world("bricks", Color(1, 1, 1), 0.33) if b.tint % 2 == 1 else Mat.world("plaster", tint, 0.25)
+			var mat := Mat.world("bricks", Color(1, 1, 1), 0.5) if b.tint % 2 == 1 else Mat.world("plaster", tint, 0.25)
 			_merge_box(mat, size, c)
 			var trim := Mat.world("concrete", Color(0.5, 0.5, 0.48), 0.3)
 			_merge_box(trim, Vector3(size.x + 0.3, 0.6, 0.3), Vector3(c.x, b.max.y + 0.3, b.min.z))
@@ -637,6 +638,16 @@ func _armory_station(st: Dictionary) -> void:
 				cr.position = Vector3(0.2, 1.05, -0.05)
 		"air":
 			mk.call(bm.call(Vector3(0.9, 0.6, 0.05)), Mat.emissive(Color(0.1, 0.35, 0.6), 1.5), Vector3(0, 1.55, -0.55))
+		"gunsmith":
+			mk.call(bm.call(Vector3(2.4, 1.3, 0.1)), Mat.pbr("planks", Color(0.8, 0.7, 0.6)), Vector3(0, 1.8, -0.62))
+			var tb := _prop("metal_toolbox", Vector3.ZERO, 0.2)
+			if tb:
+				tb.reparent(g, false)
+				tb.position = Vector3(-0.6, 1.05, 0)
+			var gun := WeaponModel.build("ar")
+			g.add_child(gun)
+			gun.position = Vector3(0.4, 1.12, 0.05)
+			gun.rotation = Vector3(0, PI / 2, PI / 2)
 
 
 func in_play(pos: Vector3, margin := 1.0) -> bool:

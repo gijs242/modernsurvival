@@ -485,6 +485,9 @@ func _refresh_shop() -> void:
 	var cleared: int = game.snap.get("cleared", 0)
 	var money: int = me.get("m", 0)
 	shop_money.text = "$%d" % money
+	if shop_cat == "gunsmith":
+		_refresh_gunsmith(me, cleared, money)
+		return
 	for it in Defs.SHOP:
 		if it.cat != shop_cat:
 			continue
@@ -539,6 +542,72 @@ func _refresh_shop() -> void:
 		shop_list.add_child(b)
 
 
+func _shop_button(title: String, desc: String, price_text: String, price_ok: bool, status: String, status_col: Color, disabled: bool, on_press: Callable) -> void:
+	var b := Button.new()
+	b.custom_minimum_size = Vector2(0, 62)
+	b.focus_mode = Control.FOCUS_NONE
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = Color(1, 1, 1, 0.04)
+	sb.border_color = Defs.CAT_COLORS[shop_cat]
+	var sh := sb.duplicate()
+	sh.bg_color = Color(1, 1, 1, 0.1)
+	sh.border_width_left = 4
+	b.add_theme_stylebox_override("normal", sb)
+	b.add_theme_stylebox_override("hover", sh)
+	b.add_theme_stylebox_override("pressed", sh)
+	b.add_theme_stylebox_override("disabled", sb)
+	var grid := HBoxContainer.new()
+	grid.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	grid.offset_left = 14
+	grid.offset_right = -14
+	grid.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	b.add_child(grid)
+	var left := VBoxContainer.new()
+	left.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	left.alignment = BoxContainer.ALIGNMENT_CENTER
+	left.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	grid.add_child(left)
+	_label(title, 22, Color(0.95, 0.94, 0.9), true, left)
+	_label(desc, 15, Color(0.65, 0.65, 0.65), false, left)
+	var right := VBoxContainer.new()
+	right.alignment = BoxContainer.ALIGNMENT_CENTER
+	right.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	grid.add_child(right)
+	var pr := _label(price_text, 22, Color(0.5, 0.9, 0.5) if price_ok else Color(0.85, 0.4, 0.35), true, right)
+	pr.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	var st := _label(status, 14, status_col, true, right)
+	st.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	if disabled:
+		b.disabled = true
+		b.modulate.a = 0.5
+	b.pressed.connect(on_press)
+	shop_list.add_child(b)
+
+
+func _refresh_gunsmith(me: Dictionary, cleared: int, money: int) -> void:
+	var lp: Player = game.player_nodes.get(game.local_id)
+	if lp == null:
+		return
+	var wid: String = lp.cur
+	var fitted: Dictionary = lp.atts_of(wid)
+	_label("Modifying: %s   (switch weapons with 1 / 2 to modify the other)" % Defs.WEAPONS[wid].name.to_upper(), 17, Color(0.85, 0.75, 1.0), true, shop_list)
+	var any := false
+	for aid in Defs.ATTACH:
+		if not Defs.attach_fits(wid, aid):
+			continue
+		any = true
+		var a: Dictionary = Defs.ATTACH[aid]
+		var locked: bool = cleared < a.after
+		var on: bool = fitted.get(a.slot, "") == aid
+		var status: String = ("UNLOCKS AFTER WAVE %d" % a.after) if locked else ("FITTED" if on else String(a.slot).to_upper())
+		var id: String = aid
+		_shop_button(a.name, a.desc, "$%d" % a.price, money >= a.price and not locked, status,
+			Color(0.5, 0.75, 1.0) if on else Color(0.6, 0.6, 0.6), locked or on,
+			func(): game.send({"t": "buy_att", "w": wid, "a": id}))
+	if not any:
+		_label("No attachments fit this weapon.", 18, Color(0.7, 0.7, 0.7), false, shop_list)
+
+
 func on_snapshot(s: Dictionary, me: Dictionary) -> void:
 	if shop_open and Engine.get_process_frames() % 10 == 0:
 		_refresh_shop()
@@ -587,7 +656,7 @@ func _process(dt: float) -> void:
 	team_lbl.text = t
 	# weapon
 	if lp and lp.is_local:
-		var w: Dictionary = Defs.WEAPONS[lp.cur]
+		var w: Dictionary = lp.ws()
 		var a: Dictionary = lp.ammo.get(lp.cur, {"mag": 0, "res": 0})
 		weapon_lbl.text = w.name.to_upper() + ("   RELOADING" if lp.reloading else "")
 		ammo_lbl.text = str(a.mag)
@@ -605,7 +674,7 @@ func _process(dt: float) -> void:
 		equip_lbl.text = eq + "[/right]"
 		prompt.text = lp.interact_prompt
 		designate_lbl.visible = lp.designating != ""
-		scope.visible = lp.cur == "dmr" and lp.ads > 0.92 and lp.designating == ""
+		scope.visible = lp.scope_view()
 		cross.visible = lp.ads < 0.5 and not scope.visible
 		cross.queue_redraw()
 		# revive progress: either me reviving someone, or someone reviving me
@@ -679,7 +748,7 @@ func _draw_cross() -> void:
 	if lp == null or not lp.is_local:
 		return
 	var c := cross.size / 2.0
-	var w: Dictionary = Defs.WEAPONS[lp.cur]
+	var w: Dictionary = lp.ws()
 	var moving := Vector2(lp.velocity.x, lp.velocity.z).length() > 1.0
 	var spread: float = w.spread * (1.6 if moving else 1.0) + lp.bloom
 	var gap: float = 6.0 + spread * 900.0 * (1.0 if not lp.sprinting else 1.8)

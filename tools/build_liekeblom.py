@@ -170,6 +170,11 @@ def main():
             areas.append({"kind": "water", "pts": pts})
         elif t.get("landuse") in ("grass", "forest") and pts[0] == pts[-1]:
             areas.append({"kind": t["landuse"], "pts": pts})
+    street_pois = []
+    for nid, (p, t) in nodes.items():
+        k2 = t.get("amenity") or t.get("shop")
+        if k2 in ("restaurant", "cafe", "fast_food", "bar", "pub", "ice_cream", "bench", "waste_basket", "bicycle_parking") and not mall_poly.buffer(1.0).contains(Point(p)):
+            street_pois.append({"kind": k2, "pos": p, "name": t.get("name", "")})
     mall_buf = mall_poly.buffer(0.8)
     FIXTURES = {"bench", "toilets", "atm", "parcel_locker", "vending_machine", "fountain", "post_box"}
     for nid, (p, t) in nodes.items():
@@ -610,6 +615,7 @@ def main():
                  "entrances": entrances, "pois": pois, "units": units, "shops": shops, "walls": walls, "ceilings": ceilings,
                  "open": open_strips, "hall_center": hall_center, "theta": round(theta, 5)},
         "spawns": spawns,
+        "street_pois": street_pois,
         "roads": roads,
         "areas": areas,
         "credits": "BAG (Kadaster, CC0) via PDOK; 3D BAG (TU Delft/3DGI, CC BY 4.0); © OpenStreetMap contributors (ODbL)",
