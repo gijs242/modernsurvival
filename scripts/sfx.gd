@@ -11,6 +11,11 @@ var i2 := 0
 var i3 := 0
 var ready_ok := false
 var _ambience: AudioStreamPlayer
+var pool_gun: Array[AudioStreamPlayer] = []   # your own gunshots: 2D, but through the World reverb
+var ig := 0
+var _verb: AudioEffectReverb
+var indoor_k := 0.0                           # 0 outdoors .. 1 inside (smoothed)
+var _room_t := 0.0
 var _synth := {}   ## names that are synthesised (no recording found)
 
 
@@ -22,6 +27,11 @@ func _ready() -> void:
 		p.bus = "SFX"
 		add_child(p)
 		pool2d.append(p)
+	for i in 8:
+		var p := AudioStreamPlayer.new()
+		p.bus = "World"
+		add_child(p)
+		pool_gun.append(p)
 	for i in 48:
 		var p := AudioStreamPlayer3D.new()
 		p.bus = "World"
@@ -42,6 +52,27 @@ func _ready() -> void:
 	ready_ok = true
 
 
+## Reverb follows the listener: a big, live tail inside the mall hall, a short distant slap outdoors.
+func _process(dt: float) -> void:
+	_room_t -= dt
+	if _room_t <= 0.0:
+		_room_t = 0.25
+		var cam := get_viewport().get_camera_3d() if get_viewport() else null
+		var g = get_tree().root.get_node_or_null("Main/Game")
+		var want := 0.0
+		if cam and g and g.map and g.map.has_method("indoor_at") and g.map.indoor_at(cam.global_position - Vector3(0, 1.5, 0)):
+			want = 1.0
+		set_meta("want_indoor", want)
+	var w: float = get_meta("want_indoor", 0.0)
+	indoor_k = move_toward(indoor_k, w, dt * 1.5)
+	if _verb:
+		_verb.room_size = lerpf(0.35, 0.78, indoor_k)
+		_verb.damping = lerpf(0.7, 0.35, indoor_k)
+		_verb.wet = lerpf(0.08, 0.3, indoor_k)
+		_verb.predelay_msec = lerpf(75.0, 22.0, indoor_k)
+		_verb.spread = lerpf(0.6, 0.95, indoor_k)
+
+
 func start_ambience() -> void:
 	if not _ambience.playing:
 		_ambience.play()
@@ -59,6 +90,7 @@ func _setup_buses() -> void:
 	AudioServer.set_bus_name(world, "World")
 	AudioServer.set_bus_send(world, "SFX")
 	var rev := AudioEffectReverb.new()
+	_verb = rev
 	rev.room_size = 0.55
 	rev.damping = 0.6
 	rev.spread = 0.8
@@ -115,7 +147,15 @@ func play_gun(id: String, pos = null, quiet := false) -> void:
 	if quiet:
 		pitch *= 1.6 if _synth.has(name) else 1.3
 	if pos == null:
-		play(name, vol, pitch, 0.04)
+		var s: AudioStream = streams.get(name)
+		if s == null:
+			return
+		var p := pool_gun[ig]
+		ig = (ig + 1) % pool_gun.size()
+		p.stream = s
+		p.volume_db = vol
+		p.pitch_scale = pitch * (1.0 + randf_range(-0.04, 0.04))
+		p.play()
 	else:
 		play_at(name, pos, vol, pitch)
 

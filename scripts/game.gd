@@ -1207,6 +1207,8 @@ func _make_heli(hid: int) -> Node3D:
 
 func _process(dt: float) -> void:
 	_update_lasers(dt)
+	if map and not snap.is_empty():
+		map.update_daylight(int(snap.get("wave", 0)), str(snap.get("sp", "")), str(snap.get("state", "")), dt)
 	# Smooth object visuals between snapshots
 	for k in obj_nodes:
 		var n: Node3D = obj_nodes[k]

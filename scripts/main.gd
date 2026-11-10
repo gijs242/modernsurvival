@@ -17,6 +17,10 @@ var quality_opt: OptionButton
 var font: SystemFont
 var font_bold: SystemFont
 var autotest_t := -1.0
+var browser_list: VBoxContainer
+var _browse_t := 0.0
+var _query_t := 0.0
+var _pending_join := ""
 
 
 func _ready() -> void:
@@ -235,6 +239,16 @@ func _build_menu() -> void:
 	_row(v, "Mouse sensitivity", _slider("sens", 0.2, 3.0, 0.05, 1.0))
 	_row(v, "Field of view", _slider("fov", 60, 100, 1, 78))
 	_row(v, "Volume", _slider("volume", 0, 1, 0.05, 0.8, func(x): Sfx.set_volume(x)))
+	# server browser: LAN games (broadcast) + recently joined servers (pinged)
+	_lbl(v, "SERVERS  ·  LAN and recently joined", 15, Color(1.0, 0.54, 0.16), true)
+	var sc := ScrollContainer.new()
+	sc.custom_minimum_size = Vector2(0, 118)
+	sc.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	v.add_child(sc)
+	browser_list = VBoxContainer.new()
+	browser_list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	sc.add_child(browser_list)
+	_lbl(browser_list, "Searching the local network…", 15, Color(0.55, 0.55, 0.55))
 	status_lbl = _lbl(v, "", 16, Color(0.6, 0.85, 0.6))
 	var keys := _lbl(v, "WASD move · Shift sprint · Space jump · C crouch · LMB fire · RMB aim · R reload · 1/2 weapons\nG frag · V melee · E armory/revive · F ready · T inspect · N night vision · Shift (scoped) hold breath\n4 claymore · 5 sentry · 6 airstrike · 7 gunship · 8 carpet · Tab squad", 14, Color(0.55, 0.55, 0.55))
 	keys.autowrap_mode = TextServer.AUTOWRAP_WORD
@@ -355,10 +369,17 @@ func _join(addr: String, p: int) -> void:
 	if err != OK:
 		_set_status("Could not connect (error %d)" % err, true)
 		return
+	_pending_join = "%s:%d" % [addr, p]
 	_set_status("Connecting to %s:%d…" % [addr, p])
 
 
 func _on_connected() -> void:
+	if _pending_join != "":
+		var recent: Array = Settings.get_val("recent", [])
+		recent.erase(_pending_join)
+		recent.push_front(_pending_join)
+		Settings.set_val("recent", recent.slice(0, 6))
+		_pending_join = ""
 	_start_game()
 	game.send({"t": "join", "name": _player_name()})
 
@@ -473,7 +494,54 @@ func _notification(what: int) -> void:
 		_pause()
 
 
+## Server browser: refresh the list once a second while the main menu is up.
+func _update_browser(dt: float) -> void:
+	if menu == null or not menu.visible or browser_list == null:
+		Net.stop_browsing()
+		return
+	Net.start_browsing()
+	_query_t -= dt
+	if _query_t <= 0.0:
+		_query_t = 3.0
+		for r in Settings.get_val("recent", []):
+			var parts := str(r).rsplit(":", true, 1)
+			if parts.size() == 2:
+				Net.query(parts[0], int(parts[1]))
+	_browse_t -= dt
+	if _browse_t > 0.0:
+		return
+	_browse_t = 1.0
+	for c in browser_list.get_children():
+		c.queue_free()
+	var keys := Net.servers.keys()
+	keys.sort()
+	if keys.is_empty():
+		var recent: Array = Settings.get_val("recent", [])
+		_lbl(browser_list, "No games found on your network yet." + ("" if recent.is_empty() else "  Recent servers aren't answering."), 15, Color(0.55, 0.55, 0.55))
+		return
+	for k in keys:
+		var info: Dictionary = Net.servers[k]
+		var h := HBoxContainer.new()
+		browser_list.add_child(h)
+		var full: bool = int(info.get("p", 0)) >= int(info.get("max", 4))
+		var l := _lbl(h, "%s   ·   %s   ·   %d/%d players   ·   wave %d" % [str(info.get("n", "?")).substr(0, 18),
+			"De Liekeblom" if info.get("map", "") == "liekeblom" else "Industrial Yard", int(info.get("p", 0)), int(info.get("max", 4)), int(info.get("w", 0))], 16)
+		l.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		l.tooltip_text = k
+		var b := Button.new()
+		b.text = "FULL" if full else "JOIN"
+		b.disabled = full
+		_style_btn(b, not full)
+		b.custom_minimum_size = Vector2(90, 34)
+		b.add_theme_font_size_override("font_size", 16)
+		var ip: String = info.ip
+		var gp := int(info.get("port", Defs.DEFAULT_PORT))
+		b.pressed.connect(func(): _join(ip, gp))
+		h.add_child(b)
+
+
 func _process(dt: float) -> void:
+	_update_browser(dt)
 	if Net.args.has("selftest"):
 		_selftest(dt)
 	elif Net.args.has("shots"):

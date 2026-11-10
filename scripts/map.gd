@@ -35,6 +35,11 @@ var static_root: Node3D
 var _merge := {}               # Material -> SurfaceTool
 var sun: DirectionalLight3D
 var env: Environment
+var sky_mat: ShaderMaterial
+var tod := 0.0                 # 0 afternoon, 1 dusk, 2 night (smoothed)
+var smoke_k := 0.0
+var _tod_t := 0.0
+var _applied := Vector2(-1, -1)
 # breakable glass panes and shootable lights (ids are indices; identical on every peer)
 var glass: Array = []          # {mesh: MeshInstance3D, body: StaticBody3D, c: Vector3, broken: bool}
 var lights: Array = []         # {l: Light3D, e: float, fix: MeshInstance3D, mat: Material, body, out: bool, street: bool}
@@ -183,10 +188,24 @@ func _build_environment(quality: int) -> void:
 	var sky := Sky.new()
 	var hdr_path := "res://assets/hdri/sky.hdr"
 	if ResourceLoader.exists(hdr_path):
-		var pm := PanoramaSkyMaterial.new()
-		pm.panorama = load(hdr_path)
-		pm.energy_multiplier = 1.0
-		sky.sky_material = pm
+		# the photographed sky, but tintable so the run can move from afternoon to dusk to night
+		var sh := Shader.new()
+		sh.code = """shader_type sky;
+uniform sampler2D panorama : filter_linear;   // HDR, already linear
+uniform vec3 tint = vec3(1.0);
+uniform float energy = 1.0;
+uniform vec3 glow_dir = vec3(0.0, 1.0, 0.0);
+uniform vec3 glow_col = vec3(0.0);
+void sky() {
+	vec3 c = texture(panorama, SKY_COORDS).rgb * tint * energy;
+	float g = pow(max(dot(EYEDIR, normalize(glow_dir)), 0.0), 5.0);
+	float horizon = pow(1.0 - abs(EYEDIR.y), 5.0) * step(0.0, EYEDIR.y + 0.05);
+	COLOR = c + glow_col * (g * 0.9 + horizon * 0.35);
+}"""
+		sky_mat = ShaderMaterial.new()
+		sky_mat.shader = sh
+		sky_mat.set_shader_parameter("panorama", load(hdr_path))
+		sky.sky_material = sky_mat
 	else:
 		var ps := ProceduralSkyMaterial.new()
 		ps.sky_top_color = Color(0.32, 0.44, 0.62)
@@ -714,6 +733,58 @@ func _bake_nav() -> void:
 	nm.filter_baking_aabb = AABB(Vector3(nb.position.x, -1, nb.position.y), Vector3(nb.size.x, 16, nb.size.y))
 	nav_region.navigation_mesh = nm
 	nav_region.bake_navigation_mesh(false)
+
+
+# ---------------------------------------------------------------- time of day
+## Afternoon at wave 1, dusk by wave 10, deeper dusk after; night waves are dark; smoke waves fog up.
+func update_daylight(wave: int, special: String, state: String, dt: float) -> void:
+	var target := clampf((wave - 1) / 9.0, 0.0, 1.0) + clampf((wave - 10) / 10.0, 0.0, 0.3)
+	if special == "night" and state == "active":
+		target = 2.0
+	var smoke_t := 1.0 if special == "smoke" and state == "active" else 0.0
+	if _applied.x < 0.0:          # first update (or joining mid-run): no slow fade-in
+		tod = target
+		smoke_k = smoke_t
+	tod = move_toward(tod, target, dt * (0.25 if target >= 1.9 or tod > 1.4 else 0.03))
+	smoke_k = move_toward(smoke_k, smoke_t, dt * 0.15)
+	_tod_t -= dt
+	if _tod_t > 0.0 and abs(_applied.x - tod) < 0.01 and abs(_applied.y - smoke_k) < 0.01:
+		return
+	if _tod_t > 0.0:
+		return
+	_tod_t = 0.4
+	_applied = Vector2(tod, smoke_k)
+	_apply_daylight()
+
+
+func _k3(a, b, c, t: float):
+	return lerp(a, b, clampf(t, 0.0, 1.0)) if t <= 1.0 else lerp(b, c, clampf(t - 1.0, 0.0, 1.0))
+
+
+func _apply_daylight() -> void:
+	var t := tod
+	# sun: sinks in the same direction as the photographed sun; at night it becomes a dim blue moon
+	var flat := Vector3(SUN_DIR.x, 0, SUN_DIR.z).normalized()
+	var elev: float = deg_to_rad(_k3(42.0, 5.0, 38.0, t))
+	var dir := flat * cos(elev) + Vector3.UP * sin(elev)
+	if t > 1.0:
+		dir = (Basis(Vector3.UP, PI * 0.8) * flat) * cos(elev) + Vector3.UP * sin(elev)
+	sun.look_at_from_position(dir * 100.0, Vector3.ZERO, Vector3.UP)
+	sun.light_color = _k3(Color(1.0, 0.95, 0.88), Color(1.0, 0.56, 0.3), Color(0.55, 0.65, 1.0), t)
+	sun.light_energy = _k3(3.0, 1.4, 0.18, t)
+	env.ambient_light_energy = _k3(0.55, 0.5, 0.14, t)
+	env.tonemap_exposure = _k3(0.92, 1.12, 1.35, t)
+	var fogc: Color = _k3(Color(0.62, 0.64, 0.68), Color(0.78, 0.56, 0.42), Color(0.04, 0.06, 0.1), t)
+	env.fog_light_color = fogc.lerp(Color(0.55, 0.55, 0.55), smoke_k)
+	env.fog_density = lerpf(0.0011, 0.028, smoke_k) + (0.0008 if t > 1.2 else 0.0)
+	env.volumetric_fog_density = lerpf(0.0025, 0.03, smoke_k)
+	env.volumetric_fog_albedo = Color(0.85, 0.82, 0.78) * (1.0 if t < 1.5 else 0.4)
+	if sky_mat:
+		sky_mat.set_shader_parameter("tint", _k3(Vector3(1, 1, 1), Vector3(1.0, 0.72, 0.55), Vector3(0.3, 0.38, 0.65), t))
+		sky_mat.set_shader_parameter("energy", _k3(1.0, 0.8, 0.06, t) * lerpf(1.0, 0.7, smoke_k))
+		sky_mat.set_shader_parameter("glow_dir", flat * 0.9 + Vector3(0, 0.12, 0))
+		sky_mat.set_shader_parameter("glow_col", Vector3(1.0, 0.45, 0.18) * clampf(1.0 - abs(t - 1.0) * 1.6, 0.0, 1.0) * 0.6)
+	set_street_level(clampf((t - 0.6) / 0.4, 0.0, 1.0))
 
 
 # ---------------------------------------------------------------- glass, lights, power

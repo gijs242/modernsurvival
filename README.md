@@ -17,6 +17,16 @@ Weapons, Gunsmith (attachments), Equipment and Air Support. New gear unlocks eve
 - **Singleplayer**, **co-op (up to 4)** as a listen server, or a **dedicated headless server** on your own hardware.
 - Realistic rendering: physically based materials (CC0 scans from ambientCG), HDRI sky lighting (Poly Haven),
   SDFGI global illumination, SSAO/SSIL, volumetric fog, soft cascaded shadows, AgX tonemapping and a colour grade.
+- Enemies that fight back smartly: they take cover behind low walls and corners and pop out to shoot, flank
+  through side streets and corridors, and lob grenades at anyone who camps. Snipers paint you with a red laser
+  before every shot, riot shields soak frontal fire, grenadiers, attack dogs, Juggernauts, and from wave 8 a troop
+  helicopter with a door gunner that you can shoot down.
+- A run moves from afternoon to dusk by wave 10. Special waves every few rounds — night (with a power cut in the mall:
+  buy night vision), smoke, an all-out rush, sniper alley — and endless-mode modifiers after wave 20 (armour plating,
+  enemies that explode). Between waves you hear the convoy pull up where the next attack will come from.
+- Shop windows shatter, lights can be shot out, bullets punch through glass, wood and thin metal. Tactical reloads
+  keep a round chambered, hold your breath on scopes, inspect your weapon. Reverb changes indoors / outdoors and
+  footsteps change with the floor.
 - Satisfying feedback: client-side hitmarkers (white = hit, gold = headshot, red = kill) with distinct sounds,
   blood/impact effects, money pop-ups, kill-combo callouts, screen shake, damage-direction indicators.
 
@@ -50,6 +60,8 @@ Weapons, Gunsmith (attachments), Equipment and Air Support. New gear unlocks eve
 | 4 | place claymore | 5 | place sentry gun |
 | 6 | airstrike (aim, click to mark) | 7 | gunship |
 | 8 | carpet bombing | Tab | squad scoreboard |
+| T | inspect weapon | N | night vision (once bought) |
+| Shift (scoped) | hold breath | LMB / RMB (dead) | switch spectated teammate |
 | Esc | pause / close shop | F11 | fullscreen |
 
 ---
@@ -57,6 +69,10 @@ Weapons, Gunsmith (attachments), Equipment and Air Support. New gear unlocks eve
 ## 2. Hosting on your own hardware
 
 Co-op uses **UDP port 7777** by default (change it in the menu or with `--port`).
+
+Games on your local network show up automatically in the **SERVERS** list on the main menu (servers broadcast on
+UDP 7779 and answer status queries on game port + 1, e.g. 7778). Servers you joined before are listed there too
+while they're online — click **JOIN**.
 
 ### Option A — Listen server (simplest)
 One player clicks **Host Co-op**. Others type the host's IP address in *Server address* and click **Join**.

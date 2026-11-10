@@ -12,6 +12,16 @@ var map_id := "liekeblom"        # "liekeblom" or "yard"; the server tells joini
 var port := Defs.DEFAULT_PORT
 var args := {}
 
+# ---- LAN discovery / server browser
+## Servers broadcast a small status packet to BROWSE_PORT on the LAN every couple of seconds and answer
+## "MSURV?" queries on (game port + 1), so the menu can list LAN games and ping recently joined servers.
+const BROWSE_PORT := 7779
+const MAGIC := "MSURV"
+var _beacon: PacketPeerUDP        # server: answers queries, sends broadcasts
+var _beacon_t := 0.0
+var _browse: PacketPeerUDP        # client menu: listens for broadcasts and replies
+var servers := {}                 # "ip:port" -> {info..., "seen": msec, "lan": bool}
+
 
 func _ready() -> void:
 	# Parse user command line args (everything after `--`).
@@ -72,7 +82,100 @@ func host(p: int) -> int:
 	multiplayer.multiplayer_peer = peer
 	mode = "host"
 	port = p
+	_start_beacon()
 	return OK
+
+
+# ------------------------------------------------------------------ discovery: server side
+func _start_beacon() -> void:
+	_stop_beacon()
+	_beacon = PacketPeerUDP.new()
+	_beacon.set_broadcast_enabled(true)
+	if _beacon.bind(port + 1) != OK:
+		push_warning("LAN discovery: could not bind UDP %d (queries disabled, broadcasts still sent)" % (port + 1))
+
+
+func _stop_beacon() -> void:
+	if _beacon:
+		_beacon.close()
+		_beacon = null
+
+
+func _status() -> Dictionary:
+	var g = get_tree().root.get_node_or_null("Main/Game")
+	var n := 0
+	var w := 0
+	var hostname := player_name
+	if g:
+		n = g.P.size()
+		w = g.wave
+		for p in g.P.values():
+			if p.id == 1:
+				hostname = p.name
+	if is_dedicated():
+		hostname = str(args.get("server_name", "Dedicated server"))
+	return {"m": MAGIC, "n": hostname, "map": map_id, "p": n, "max": Defs.MAX_PLAYERS, "port": port, "w": w}
+
+
+func _process(dt: float) -> void:
+	if _beacon:
+		# answer queries
+		while _beacon.get_available_packet_count() > 0:
+			var pkt := _beacon.get_packet().get_string_from_utf8()
+			var ip := _beacon.get_packet_ip()
+			var from_port := _beacon.get_packet_port()
+			if pkt.begins_with(MAGIC + "?") and ip != "":
+				_beacon.set_dest_address(ip, from_port)
+				_beacon.put_packet(JSON.stringify(_status()).to_utf8_buffer())
+		_beacon_t -= dt
+		if _beacon_t <= 0.0:
+			_beacon_t = 2.0
+			var data := JSON.stringify(_status()).to_utf8_buffer()
+			for dest in ["255.255.255.255", "127.0.0.1"]:
+				_beacon.set_dest_address(dest, BROWSE_PORT)
+				_beacon.put_packet(data)
+	if _browse:
+		while _browse.get_available_packet_count() > 0:
+			var raw := _browse.get_packet().get_string_from_utf8()
+			var ip := _browse.get_packet_ip()
+			var info = JSON.parse_string(raw)
+			if ip in IP.get_local_addresses():
+				ip = "127.0.0.1"             # same machine: one entry, however it reached us
+			if info is Dictionary and info.get("m", "") == MAGIC:
+				var key := "%s:%d" % [ip, int(info.get("port", Defs.DEFAULT_PORT))]
+				info["ip"] = ip
+				info["seen"] = Time.get_ticks_msec()
+				servers[key] = info
+		for k in servers.keys():
+			if Time.get_ticks_msec() - int(servers[k].seen) > 6500:
+				servers.erase(k)
+
+
+# ------------------------------------------------------------------ discovery: client side
+func start_browsing() -> void:
+	if _browse:
+		return
+	_browse = PacketPeerUDP.new()
+	if _browse.bind(BROWSE_PORT) != OK:
+		_browse.bind(0)               # another copy already listens here: we can still query servers directly
+	servers.clear()
+
+
+func stop_browsing() -> void:
+	if _browse:
+		_browse.close()
+		_browse = null
+
+
+## Ask a server (e.g. one you joined before) for its status; the answer shows up in `servers`.
+func query(address: String, p: int) -> void:
+	if _browse == null or address == "":
+		return
+	var ip := address if address.is_valid_ip_address() else IP.resolve_hostname(address, IP.TYPE_IPV4)
+	if ip == "":
+		return
+	_browse.set_dest_address(ip, p + 1)
+	_browse.put_packet((MAGIC + "?").to_utf8_buffer())
 
 
 func dedicated(p: int) -> int:
@@ -98,6 +201,7 @@ func leave() -> void:
 
 
 func _reset() -> void:
+	_stop_beacon()
 	if multiplayer.multiplayer_peer and not multiplayer.multiplayer_peer is OfflineMultiplayerPeer:
 		multiplayer.multiplayer_peer.close()
 	multiplayer.multiplayer_peer = OfflineMultiplayerPeer.new()
