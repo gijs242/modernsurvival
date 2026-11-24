@@ -10,6 +10,7 @@ class UVerticalBox;
 class UTextBlock;
 class UButton;
 class UBorder;
+class UEditableTextBox;
 
 /** Lets a UButton call a C++ lambda (UMG click events need a UFUNCTION target). */
 UCLASS()
@@ -52,6 +53,8 @@ class MODERNSURVIVAL_API UMSMainMenuWidget : public UMSMenuWidgetBase
 
 protected:
 	virtual void Build() override;
+
+	UPROPERTY(Transient) TObjectPtr<UEditableTextBox> AddressBox;
 };
 
 UCLASS()
@@ -84,9 +87,15 @@ class MODERNSURVIVAL_API UMSShopWidget : public UMSMenuWidgetBase
 public:
 	void SetCategory(EMSShopCategory InCategory);
 	void Refresh();
+	/** Purchase result from the server. */
+	void ShowResult(const FText& Message);
 
 protected:
 	virtual void Build() override;
+	virtual void NativeTick(const FGeometry& MyGeometry, float InDeltaTime) override;
+	FString StateSignature() const;
+	float RefreshTimer = 0.25f;
+	FString LastSignature;
 
 	EMSShopCategory Category = EMSShopCategory::Weapons;
 	FText LastMessage;

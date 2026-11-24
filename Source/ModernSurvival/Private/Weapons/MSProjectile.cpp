@@ -31,6 +31,9 @@ AMSProjectile::AMSProjectile()
 	Glow->SetCastShadows(false);
 
 	InitialLifeSpan = 8.f;
+	bReplicates = true;
+	SetReplicateMovement(true);
+	SetNetUpdateFrequency(30.f);
 }
 
 void AMSProjectile::BeginPlay()
@@ -56,12 +59,22 @@ void AMSProjectile::Launch(const FMSExplosionParams& InExplosion, const FVector&
 
 void AMSProjectile::OnHit(UPrimitiveComponent* HitComp, AActor* OtherActor, UPrimitiveComponent* OtherComp, FVector NormalImpulse, const FHitResult& Hit)
 {
-	Detonate(Hit.ImpactPoint + Hit.ImpactNormal * 10.f);
+	if (HasAuthority())
+	{
+		Detonate(Hit.ImpactPoint + Hit.ImpactNormal * 10.f);
+	}
 }
 
 void AMSProjectile::LifeSpanExpired()
 {
-	Detonate(GetActorLocation());
+	if (HasAuthority())
+	{
+		Detonate(GetActorLocation());
+	}
+	else
+	{
+		Super::LifeSpanExpired();
+	}
 }
 
 void AMSProjectile::Detonate(const FVector& Location)

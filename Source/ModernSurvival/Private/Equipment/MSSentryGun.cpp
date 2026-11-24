@@ -9,6 +9,7 @@
 #include "Components/BoxComponent.h"
 #include "Engine/World.h"
 #include "Kismet/GameplayStatics.h"
+#include "Net/UnrealNetwork.h"
 
 AMSSentryGun::AMSSentryGun()
 {
@@ -24,6 +25,37 @@ AMSSentryGun::AMSSentryGun()
 	Turret->SetRelativeLocation(FVector(0.f, 0.f, 45.f));
 	Health = CreateDefaultSubobject<UMSHealthComponent>(TEXT("Health"));
 	Health->Team = EMSTeam::Player;
+	bReplicates = true;
+}
+
+void AMSSentryGun::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
+{
+	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
+	DOREPLIFETIME(AMSSentryGun, RowName);
+	DOREPLIFETIME(AMSSentryGun, TurretAim);
+}
+
+void AMSSentryGun::OnRep_Aim()
+{
+	Turret->SetWorldRotation(TurretAim);
+}
+
+void AMSSentryGun::BuildVisual()
+{
+	if (bVisualBuilt || RowName.IsNone() || GetNetMode() == NM_DedicatedServer)
+	{
+		return;
+	}
+	bVisualBuilt = true;
+	const FLinearColor C = UMSDataSubsystem::Get(this)->GetEquipment(RowName).PlaceholderColor;
+	// Tripod + box body + barrel shroud.
+	for (int32 I = 0; I < 3; ++I)
+	{
+		const float Yaw = 120.f * I;
+		UMSFXLibrary::AddPlaceholderShape(this, Base, TEXT("Cylinder"), FTransform(FRotator(25.f, Yaw, 0.f), FRotator(0.f, Yaw, 0.f).Vector() * 18.f + FVector(0, 0, -25.f), FVector(0.04f, 0.04f, 0.6f)), C * 0.5f, false);
+	}
+	UMSFXLibrary::AddPlaceholderShape(this, Turret, TEXT("Cube"), FTransform(FRotator::ZeroRotator, FVector(0, 0, 0), FVector(0.45f, 0.3f, 0.25f)), C, false);
+	UMSFXLibrary::AddPlaceholderShape(this, Turret, TEXT("Cube"), FTransform(FRotator::ZeroRotator, FVector(-5, 0, 22), FVector(0.3f, 0.35f, 0.04f)), C * 0.7f, false);
 }
 
 void AMSSentryGun::Deploy(FName EquipmentRow, AController* InInstigator, EMSTeam InTeam)
@@ -36,16 +68,8 @@ void AMSSentryGun::Deploy(FName EquipmentRow, AController* InInstigator, EMSTeam
 	Health->Team = Team;
 	Health->SetMaxHealth(Row.Health, true);
 	Health->OnDied.AddDynamic(this, &AMSSentryGun::HandleDied);
-
-	const FLinearColor C = Row.PlaceholderColor;
-	// Tripod + box body + barrel shroud.
-	for (int32 I = 0; I < 3; ++I)
-	{
-		const float Yaw = 120.f * I;
-		UMSFXLibrary::AddPlaceholderShape(this, Base, TEXT("Cylinder"), FTransform(FRotator(25.f, Yaw, 0.f), FRotator(0.f, Yaw, 0.f).Vector() * 18.f + FVector(0, 0, -25.f), FVector(0.04f, 0.04f, 0.6f)), C * 0.5f, false);
-	}
-	UMSFXLibrary::AddPlaceholderShape(this, Turret, TEXT("Cube"), FTransform(FRotator::ZeroRotator, FVector(0, 0, 0), FVector(0.45f, 0.3f, 0.25f)), C, false);
-	UMSFXLibrary::AddPlaceholderShape(this, Turret, TEXT("Cube"), FTransform(FRotator::ZeroRotator, FVector(-5, 0, 22), FVector(0.3f, 0.35f, 0.04f)), C * 0.7f, false);
+	TurretAim = Turret->GetComponentRotation();
+	BuildVisual();
 
 	FActorSpawnParameters Params;
 	Params.Owner = this;
@@ -70,7 +94,7 @@ void AMSSentryGun::GetAimRay(FVector& OutStart, FVector& OutDirection) const
 void AMSSentryGun::Tick(float DeltaSeconds)
 {
 	Super::Tick(DeltaSeconds);
-	if (RowName.IsNone() || Health->IsDead())
+	if (RowName.IsNone() || Health->IsDead() || !HasAuthority())
 	{
 		return;
 	}
@@ -101,13 +125,13 @@ void AMSSentryGun::Tick(float DeltaSeconds)
 		}
 		// Idle sweep.
 		Turret->AddLocalRotation(FRotator(0.f, 25.f * DeltaSeconds, 0.f));
+		TurretAim = Turret->GetComponentRotation();
 		return;
 	}
 	const FVector To = UMSCombatSubsystem::GetAimPoint(T) - Turret->GetComponentLocation();
-	const FRotator Want = To.Rotation();
-	const FRotator Now = Turret->GetComponentRotation();
-	const FRotator NewRot = FMath::RInterpConstantTo(Now, Want, DeltaSeconds, Row.TurnSpeed);
+	const FRotator NewRot = FMath::RInterpConstantTo(Turret->GetComponentRotation(), To.Rotation(), DeltaSeconds, Row.TurnSpeed);
 	Turret->SetWorldRotation(NewRot);
+	TurretAim = NewRot;
 	const float Angle = FMath::RadiansToDegrees(FMath::Acos(FMath::Clamp(FVector::DotProduct(NewRot.Vector(), To.GetSafeNormal()), -1.f, 1.f)));
 	if (Angle <= Row.FireConeDeg)
 	{
@@ -121,11 +145,20 @@ void AMSSentryGun::Tick(float DeltaSeconds)
 
 void AMSSentryGun::HandleDied(UMSHealthComponent* InHealth, const FMSDamageInfo& KillingBlow)
 {
+	if (!HasAuthority())
+	{
+		return;
+	}
 	if (Gun)
 	{
 		Gun->Destroy();
 		Gun = nullptr;
 	}
-	UMSFXLibrary::SpawnExplosion(GetWorld(), GetActorLocation(), 150.f, nullptr);
+	FMSExplosionParams Small;
+	Small.Damage = 0.f;
+	Small.OuterRadius = 150.f;
+	Small.Trauma = 0.2f;
+	Small.TraumaRadius = 800.f;
+	UMSCombatLibrary::Explode(this, GetActorLocation(), Small, InstigatorController, this, EMSTeam::Neutral);
 	Destroy();
 }

@@ -761,8 +761,18 @@ EMSActivityResult UMSCombatBrainComponent::TickActivity(EMSBrainActivity A, floa
 
 	case EMSBrainActivity::Follow:
 	{
-		const APlayerController* PC = GetWorld()->GetFirstPlayerController();
-		APawn* Leader = PC ? PC->GetPawn() : nullptr;
+		APawn* Leader = nullptr;
+		float LeaderDist = TNumericLimits<float>::Max();
+		for (FConstPlayerControllerIterator It = GetWorld()->GetPlayerControllerIterator(); It; ++It)
+		{
+			APawn* Candidate = It->Get() ? It->Get()->GetPawn() : nullptr;
+			const float D = Candidate ? FVector::DistSquared(Candidate->GetActorLocation(), P->GetActorLocation()) : TNumericLimits<float>::Max();
+			if (D < LeaderDist)
+			{
+				Leader = Candidate;
+				LeaderDist = D;
+			}
+		}
 		const float FollowDist = UMSDataSubsystem::Get(this)->GetEquipment(TEXT("AISquad")).SquadFollowDistance;
 		if (Leader && RepathTimer <= 0.f)
 		{

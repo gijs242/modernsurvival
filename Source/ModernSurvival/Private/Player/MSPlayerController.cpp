@@ -6,7 +6,9 @@
 #include "Data/MSSettings.h"
 #include "Game/MSGameInstance.h"
 #include "Game/MSGameMode.h"
+#include "Game/MSBuyStation.h"
 #include "Game/MSMenuGameMode.h"
+#include "Look/MSLookManager.h"
 #include "ModernSurvival.h"
 #include "Player/MSPlayerCharacter.h"
 #include "Player/MSPlayerState.h"
@@ -16,6 +18,7 @@
 #include "EnhancedInputSubsystems.h"
 #include "Engine/LocalPlayer.h"
 #include "Engine/World.h"
+#include "EngineUtils.h"
 #include "InputAction.h"
 #include "InputMappingContext.h"
 #include "InputModifiers.h"
@@ -187,6 +190,13 @@ void AMSPlayerController::BeginPlay()
 		return;
 	}
 	AddMappingContexts();
+	// Every machine draws its own colour grade (maps can place one with their own LookRow).
+	if (!TActorIterator<AMSLookManager>(GetWorld()))
+	{
+		FActorSpawnParameters Params;
+		Params.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+		GetWorld()->SpawnActor<AMSLookManager>(AMSLookManager::StaticClass(), FTransform::Identity, Params);
+	}
 	if (GetWorld()->GetAuthGameMode<AMSMenuGameMode>())
 	{
 		ShowMainMenu();
@@ -217,7 +227,8 @@ void AMSPlayerController::SetMenuInputMode(bool bMenu, bool bPauseGame)
 	{
 		SetInputMode(FInputModeGameOnly());
 	}
-	SetPause(bPauseGame);
+	// Only a single-player game can actually pause.
+	SetPause(bPauseGame && GetNetMode() == NM_Standalone);
 	if (AMSPlayerCharacter* Player = GetPawn<AMSPlayerCharacter>())
 	{
 		Player->SetInputBlocked(bMenu);
@@ -321,7 +332,16 @@ void AMSPlayerController::ShowMainMenu()
 void AMSPlayerController::RestartMatch()
 {
 	SetPause(false);
-	UGameplayStatics::OpenLevel(this, FName(*UGameplayStatics::GetCurrentLevelName(this, true)));
+	const FString Map = UGameplayStatics::GetCurrentLevelName(this, true);
+	if (GetNetMode() == NM_ListenServer)
+	{
+		// Co-op host: everyone travels to a fresh copy of the map together.
+		GetWorld()->ServerTravel(Map + TEXT("?listen"), true);
+	}
+	else if (GetNetMode() == NM_Standalone)
+	{
+		UGameplayStatics::OpenLevel(this, FName(*Map));
+	}
 }
 
 void AMSPlayerController::ReturnToMainMenu()
@@ -330,10 +350,69 @@ void AMSPlayerController::ReturnToMainMenu()
 	UGameplayStatics::OpenLevel(this, FName(*UMSSettings::Get()->MainMenuMap));
 }
 
+void AMSPlayerController::HostGame(const FString& MapPath)
+{
+	UGameplayStatics::OpenLevel(this, FName(*MapPath), true, TEXT("listen"));
+}
+
+void AMSPlayerController::JoinGame(const FString& Address)
+{
+	const FString Trimmed = Address.TrimStartAndEnd();
+	ClientTravel(Trimmed.IsEmpty() ? FString(TEXT("127.0.0.1")) : Trimmed, TRAVEL_Absolute);
+}
+
+void AMSPlayerController::RequestPurchase(FName ShopRow)
+{
+	ServerPurchase(ShopRow);
+}
+
+void AMSPlayerController::ServerPurchase_Implementation(FName ShopRow)
+{
+	FText Message;
+	if (AMSPlayerCharacter* Player = GetPawn<AMSPlayerCharacter>())
+	{
+		AMSBuyStation::TryPurchase(Player, ShopRow, Message);
+	}
+	ClientPurchaseResult(Message);
+}
+
+void AMSPlayerController::ClientPurchaseResult_Implementation(const FText& Message)
+{
+	if (ShopWidget && ShopWidget->IsInViewport())
+	{
+		ShopWidget->ShowResult(Message);
+	}
+}
+
+void AMSPlayerController::ClientGameOver_Implementation(FMSGameOverStats Stats)
+{
+	if (UMSGameInstance* GI = GetGameInstance<UMSGameInstance>())
+	{
+		const FString Map = UGameplayStatics::GetCurrentLevelName(this, true);
+		Stats.bNewBest = GI->SubmitWave(Map, Stats.WaveReached);
+		Stats.BestWave = GI->GetBestWave(Map);
+	}
+	ShowGameOver(Stats);
+}
+
+bool AMSPlayerController::CheatAllowed()
+{
+	if (HasAuthority())
+	{
+		return true;
+	}
+	ClientMessage(TEXT("Cheats only work on the host / in single player."));
+	return false;
+}
+
 // ------------------------------------------------------------------------------- cheats
 
 void AMSPlayerController::MSGiveCash(int32 Amount)
 {
+	if (!CheatAllowed())
+	{
+		return;
+	}
 	if (AMSPlayerState* PS = GetPlayerState<AMSPlayerState>())
 	{
 		PS->AddCash(Amount, NSLOCTEXT("MS", "Cheat", "Cheat"));
@@ -342,6 +421,10 @@ void AMSPlayerController::MSGiveCash(int32 Amount)
 
 void AMSPlayerController::MSSkipWave()
 {
+	if (!CheatAllowed())
+	{
+		return;
+	}
 	if (AMSGameMode* GM = GetWorld()->GetAuthGameMode<AMSGameMode>())
 	{
 		GM->DebugKillAll(GetPawn());
@@ -351,6 +434,10 @@ void AMSPlayerController::MSSkipWave()
 
 void AMSPlayerController::MSSetWave(int32 Wave)
 {
+	if (!CheatAllowed())
+	{
+		return;
+	}
 	if (AMSGameMode* GM = GetWorld()->GetAuthGameMode<AMSGameMode>())
 	{
 		GM->DebugSetWave(Wave);
@@ -359,6 +446,10 @@ void AMSPlayerController::MSSetWave(int32 Wave)
 
 void AMSPlayerController::MSKillAll()
 {
+	if (!CheatAllowed())
+	{
+		return;
+	}
 	if (AMSGameMode* GM = GetWorld()->GetAuthGameMode<AMSGameMode>())
 	{
 		GM->DebugKillAll(GetPawn());
@@ -367,6 +458,10 @@ void AMSPlayerController::MSKillAll()
 
 void AMSPlayerController::MSGod()
 {
+	if (!CheatAllowed())
+	{
+		return;
+	}
 	if (AMSPlayerCharacter* Player = GetPawn<AMSPlayerCharacter>())
 	{
 		Player->GetHealth()->bInvulnerable = !Player->GetHealth()->bInvulnerable;
@@ -376,6 +471,10 @@ void AMSPlayerController::MSGod()
 
 void AMSPlayerController::MSGiveWeapon(FName WeaponRow)
 {
+	if (!CheatAllowed())
+	{
+		return;
+	}
 	if (AMSPlayerCharacter* Player = GetPawn<AMSPlayerCharacter>())
 	{
 		Player->GiveWeapon(WeaponRow, true);
@@ -384,6 +483,10 @@ void AMSPlayerController::MSGiveWeapon(FName WeaponRow)
 
 void AMSPlayerController::MSGiveAll()
 {
+	if (!CheatAllowed())
+	{
+		return;
+	}
 	if (AMSPlayerCharacter* Player = GetPawn<AMSPlayerCharacter>())
 	{
 		for (int32 I = 0; I < static_cast<int32>(EMSEquipmentSlot::Count); ++I)

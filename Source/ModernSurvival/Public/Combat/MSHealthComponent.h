@@ -56,8 +56,10 @@ public:
 	UPROPERTY(BlueprintAssignable, Category = "Health") FMSOnArmorBroken OnArmorBroken;
 	FMSLethalDamageInterceptor LethalDamageInterceptor;
 
+	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
+
 	// Tuning (set by the owner from DataTables) ------------------------------------------
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Health") EMSTeam Team = EMSTeam::Enemy;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Replicated, Category = "Health") EMSTeam Team = EMSTeam::Enemy;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Health") float ArmorAbsorb = 0.8f;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Health") float DamageReduction = 0.f;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Health") float HeadshotScale = 1.f;
@@ -72,14 +74,19 @@ protected:
 	virtual void TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction) override;
 
 private:
-	UPROPERTY(VisibleAnywhere, Category = "Health") float MaxHealth = 100.f;
-	UPROPERTY(VisibleAnywhere, Category = "Health") float Health = 100.f;
-	UPROPERTY(VisibleAnywhere, Category = "Health") float Armor = 0.f;
-	UPROPERTY(VisibleAnywhere, Category = "Health") float MaxArmor = 0.f;
+	// Server-authoritative; replicated so every client's HUD and effects see the same numbers.
+	UPROPERTY(VisibleAnywhere, Replicated, Category = "Health") float MaxHealth = 100.f;
+	UPROPERTY(VisibleAnywhere, Replicated, Category = "Health") float Health = 100.f;
+	UPROPERTY(VisibleAnywhere, Replicated, Category = "Health") float Armor = 0.f;
+	UPROPERTY(VisibleAnywhere, Replicated, Category = "Health") float MaxArmor = 0.f;
+	UPROPERTY(VisibleAnywhere, ReplicatedUsing = OnRep_Dead, Category = "Health") bool bDead = false;
 	float RegenDelay = 0.f;
 	float RegenRate = 0.f;
 	double LastDamageTime = -1000.0;
-	bool bDead = false;
+
+	/** Clients: fire OnDied locally so ragdolls, sounds and HUD react. */
+	UFUNCTION() void OnRep_Dead();
+	bool HasAuthorityOver() const;
 
 	struct FRecentHit { double Time; float Amount; };
 	TArray<FRecentHit> RecentHits;

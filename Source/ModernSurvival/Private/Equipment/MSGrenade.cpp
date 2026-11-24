@@ -8,6 +8,7 @@
 #include "Components/StaticMeshComponent.h"
 #include "Engine/StaticMesh.h"
 #include "GameFramework/ProjectileMovementComponent.h"
+#include "Net/UnrealNetwork.h"
 #include "TimerManager.h"
 
 AMSGrenade::AMSGrenade()
@@ -25,6 +26,44 @@ AMSGrenade::AMSGrenade()
 	Movement->Friction = 0.4f;
 	Movement->InitialSpeed = 0.f;
 	Movement->bAutoActivate = false;
+
+	bReplicates = true;
+	SetReplicateMovement(true);
+	SetNetUpdateFrequency(30.f);
+}
+
+void AMSGrenade::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
+{
+	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
+	DOREPLIFETIME(AMSGrenade, RowName);
+}
+
+void AMSGrenade::OnRep_Row()
+{
+	BuildVisual();
+}
+
+void AMSGrenade::BuildVisual()
+{
+	if (bVisualBuilt || RowName.IsNone() || GetNetMode() == NM_DedicatedServer)
+	{
+		return;
+	}
+	bVisualBuilt = true;
+	const FMSEquipmentRow& Row = UMSDataSubsystem::Get(this)->GetEquipment(RowName);
+	if (UStaticMesh* Mesh = Row.Mesh.LoadSynchronous())
+	{
+		UStaticMeshComponent* Comp = UMSFXLibrary::AddPlaceholderShape(this, Collision, TEXT("Sphere"), FTransform::Identity, FLinearColor::White, false);
+		Comp->SetStaticMesh(Mesh);
+		Comp->SetMaterial(0, nullptr);
+		// glTF in metres imports ~0.1 units across; scale it to centimetres.
+		const float Len = Mesh->GetBoundingBox().GetSize().GetMax();
+		Comp->SetRelativeScale3D(FVector(Len < 2.f ? 100.f : 1.f));
+	}
+	else
+	{
+		UMSFXLibrary::AddPlaceholderShape(this, Collision, TEXT("Sphere"), FTransform(FRotator::ZeroRotator, FVector::ZeroVector, FVector(0.07f, 0.07f, 0.1f)), Row.PlaceholderColor, false);
+	}
 }
 
 void AMSGrenade::Arm(FName EquipmentRow, const FVector& Velocity, float Fuse, AController* InInstigator, EMSTeam InTeam, AActor* IgnoreActor)
@@ -40,19 +79,7 @@ void AMSGrenade::Arm(FName EquipmentRow, const FVector& Velocity, float Fuse, AC
 	{
 		Collision->IgnoreActorWhenMoving(IgnoreActor, true);
 	}
-	if (UStaticMesh* Mesh = Row.Mesh.LoadSynchronous())
-	{
-		UStaticMeshComponent* Comp = UMSFXLibrary::AddPlaceholderShape(this, Collision, TEXT("Sphere"), FTransform::Identity, FLinearColor::White, false);
-		Comp->SetStaticMesh(Mesh);
-		Comp->SetMaterial(0, nullptr);
-		// glTF in metres imports ~0.1 units across; scale it to centimetres.
-		const float Len = Mesh->GetBoundingBox().GetSize().GetMax();
-		Comp->SetRelativeScale3D(FVector(Len < 2.f ? 100.f : 1.f));
-	}
-	else
-	{
-		UMSFXLibrary::AddPlaceholderShape(this, Collision, TEXT("Sphere"), FTransform(FRotator::ZeroRotator, FVector::ZeroVector, FVector(0.07f, 0.07f, 0.1f)), Row.PlaceholderColor, false);
-	}
+	BuildVisual();
 	GetWorldTimerManager().SetTimer(FuseTimer, this, &AMSGrenade::Detonate, FMath::Max(0.02f, Fuse), false);
 }
 

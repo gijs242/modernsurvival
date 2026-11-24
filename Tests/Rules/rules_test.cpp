@@ -198,6 +198,35 @@ static void TestAcoustics()
 	EXPECT(ClassifyRoom(Carport, 800.f, 0.6f) == Outdoor);
 }
 
+static void TestCoop()
+{
+	FSpawnParams P;
+	FViewer V[2];
+	V[0].Position = FVec3(0, 0, 160);
+	V[0].Forward = FVec3(1, 0, 0);
+	V[1].Position = FVec3(-6000, 0, 160);
+	V[1].Forward = FVec3(1, 0, 0);          // player 2 stands far behind, looking the same way
+	const FVec3 BehindP1(-3000, 0, 160);    // behind player 1 but right in front of player 2
+	V[0].bSeesPoint = true;
+	V[1].bSeesPoint = true;
+	EXPECT(ScoreSpawnPoint(V[0].Position, V[0].Forward, BehindP1, true, P) > 0.f);   // fine solo...
+	EXPECT(ScoreSpawnPointMulti(V, 2, BehindP1, P) < 0.f);                            // ...not in co-op
+	V[1].bSeesPoint = false;                                                          // a wall hides it from player 2
+	EXPECT(ScoreSpawnPointMulti(V, 2, BehindP1, P) > 0.f);
+	const FVec3 NearP2(-6500, 800, 160);                                              // too close to player 2
+	EXPECT(ScoreSpawnPointMulti(V, 2, NearP2, P) < 0.f);
+	EXPECT(ScoreSpawnPointMulti(V, 0, BehindP1, P) < 0.f);
+	EXPECT(ScoreSpawnPointMulti(V, 1, BehindP1, P) == ScoreSpawnPoint(V[0].Position, V[0].Forward, BehindP1, true, P));
+
+	EXPECT(CoopScale(10, 1, 0.6f) == 10);
+	EXPECT(CoopScale(10, 2, 0.6f) == 16);
+	EXPECT(CoopScale(0, 2, 0.6f) == 0);
+	EXPECT(IsTeamWiped(0) && !IsTeamWiped(1));
+	EXPECT_NEAR(ReviveStep(0.f, true, 3.f, 1.5f), 0.5f, 1e-5f);
+	EXPECT_NEAR(ReviveStep(0.9f, true, 3.f, 1.f), 1.f, 1e-5f);
+	EXPECT_NEAR(ReviveStep(0.9f, false, 3.f, 1.f), 0.f, 1e-5f);
+}
+
 int main()
 {
 	TestWaves();
@@ -207,6 +236,7 @@ int main()
 	TestSpawning();
 	TestFeel();
 	TestAcoustics();
+	TestCoop();
 	std::printf("%d checks, %d failures\n", GChecks, GFailures);
 	return GFailures == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
 }

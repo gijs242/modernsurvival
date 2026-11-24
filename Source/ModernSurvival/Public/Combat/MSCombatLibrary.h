@@ -21,6 +21,9 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Combat", meta = (WorldContext = "WorldContext"))
 	static void Explode(const UObject* WorldContext, FVector Location, const FMSExplosionParams& Params, AController* Instigator, AActor* Causer, EMSTeam SourceTeam);
 
+	/** Flash, smoke, sound and camera shake for local players (no damage). */
+	static void PlayExplosionCosmetics(UWorld* World, const FVector& Location, float Radius, class UNiagaraSystem* FX, class USoundBase* Sound, float Trauma, float TraumaRadius);
+
 	/** True if the hit is a headshot: a component tagged "Head" or a bone whose name contains "head". */
 	static bool IsHeadshot(const FHitResult& Hit);
 

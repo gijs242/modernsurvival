@@ -3,6 +3,7 @@
 #include "Core/MSRules.h"
 #include "Data/MSDataSubsystem.h"
 #include "Components/SceneComponent.h"
+#include "GameFramework/Pawn.h"
 
 UMSViewModelComponent::UMSViewModelComponent()
 {
@@ -31,6 +32,14 @@ void UMSViewModelComponent::TickComponent(float DeltaTime, ELevelTick TickType, 
 	const FMSPlayerFeelRow& Feel = Data->GetPlayerFeel();
 	const float Dt = FMath::Min(DeltaTime, 0.1f);
 	Time += Dt;
+
+	const APawn* OwnerPawn = Cast<APawn>(GetOwner());
+	if (OwnerPawn && !OwnerPawn->IsLocallyControlled())
+	{
+		// Seen by others: hold the gun at the chest of the third-person body.
+		Pivot->SetRelativeLocationAndRotation(FVector(30.f, 16.f, -32.f), FRotator::ZeroRotator);
+		return;
+	}
 
 	// ADS blend with an ease so the sight snaps into place at the end.
 	const float A = Input.ADSAlpha;

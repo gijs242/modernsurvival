@@ -18,6 +18,7 @@
 #include "Engine/World.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "Kismet/GameplayStatics.h"
+#include "Net/UnrealNetwork.h"
 #include "TimerManager.h"
 
 AMSAICharacter::AMSAICharacter(const FObjectInitializer& ObjectInitializer)
@@ -52,6 +53,10 @@ void AMSAICharacter::BeginPlay()
 	Super::BeginPlay();
 	Health->OnDamaged.AddDynamic(this, &AMSAICharacter::HandleDamaged);
 	Health->OnDied.AddDynamic(this, &AMSAICharacter::HandleDied);
+	if (!HasAuthority())
+	{
+		return;   // clients set up from the replicated row (OnRep_EnemyRow)
+	}
 	// Placed in a level by hand (nobody called InitFromRow this frame): default to a rifleman.
 	GetWorldTimerManager().SetTimerForNextTick(FTimerDelegate::CreateWeakLambda(this, [this]()
 	{
@@ -60,6 +65,60 @@ void AMSAICharacter::BeginPlay()
 			InitFromRow(TEXT("Rifleman"), 1.f, 1.f, 1.f, EMSTeam::Enemy);
 		}
 	}));
+}
+
+void AMSAICharacter::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
+{
+	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
+	DOREPLIFETIME(AMSAICharacter, EnemyRowName);
+	DOREPLIFETIME(AMSAICharacter, Team);
+}
+
+void AMSAICharacter::OnRep_EnemyRow()
+{
+	const UMSDataSubsystem* Data = UMSDataSubsystem::Get(this);
+	const FMSEnemyRow* Found = Data ? Data->FindEnemy(EnemyRowName) : nullptr;
+	EnemyRow = Found ? *Found : FMSEnemyRow();
+	bInitialized = true;
+	ApplyRowLocally();
+}
+
+void AMSAICharacter::ApplyRowLocally()
+{
+	GetCapsuleComponent()->SetCapsuleSize(EnemyRow.CapsuleRadius, EnemyRow.CapsuleHalfHeight);
+	GetMesh()->SetRelativeLocation(FVector(0.f, 0.f, -EnemyRow.CapsuleHalfHeight));
+	GetCharacterMovement()->MaxWalkSpeed = EnemyRow.WalkSpeed;
+	// The placeholder parts double as hitboxes, so they're built on the server too.
+	BuildVisual();
+	if (GetNetMode() != NM_DedicatedServer)
+	{
+		if (!LoopAudio)
+		{
+			if (USoundBase* Loop = EnemyRow.LoopSound.LoadSynchronous())
+			{
+				LoopAudio = UGameplayStatics::SpawnSoundAttached(Loop, GetRootComponent());
+			}
+		}
+	}
+}
+
+void AMSAICharacter::OnStartCrouch(float HalfHeightAdjust, float ScaledHalfHeightAdjust)
+{
+	Super::OnStartCrouch(HalfHeightAdjust, ScaledHalfHeightAdjust);
+	// Placeholder bodies have no animation: squash them to read as crouched (runs on every machine).
+	if (bPlaceholder && GetMesh())
+	{
+		GetMesh()->SetRelativeScale3D(FVector(1.f, 1.f, 0.62f));
+	}
+}
+
+void AMSAICharacter::OnEndCrouch(float HalfHeightAdjust, float ScaledHalfHeightAdjust)
+{
+	Super::OnEndCrouch(HalfHeightAdjust, ScaledHalfHeightAdjust);
+	if (bPlaceholder && GetMesh())
+	{
+		GetMesh()->SetRelativeScale3D(FVector::OneVector);
+	}
 }
 
 void AMSAICharacter::EndPlay(const EEndPlayReason::Type Reason)
@@ -82,9 +141,7 @@ void AMSAICharacter::InitFromRow(FName InEnemyRow, float HealthMultiplier, float
 	AccuracyMultiplier = FMath::Max(0.1f, InAccuracyMultiplier);
 	bInitialized = true;
 
-	GetCapsuleComponent()->SetCapsuleSize(EnemyRow.CapsuleRadius, EnemyRow.CapsuleHalfHeight);
-	GetMesh()->SetRelativeLocation(FVector(0.f, 0.f, -EnemyRow.CapsuleHalfHeight));
-	GetCharacterMovement()->MaxWalkSpeed = EnemyRow.WalkSpeed;
+	ApplyRowLocally();
 
 	Health->Team = Team;
 	Health->SetMaxHealth(EnemyRow.Health * HealthMultiplier, true);
@@ -95,8 +152,6 @@ void AMSAICharacter::InitFromRow(FName InEnemyRow, float HealthMultiplier, float
 	{
 		Health->ConfigureRegen(5.f, 25.f);
 	}
-
-	BuildVisual();
 
 	if (Weapon)
 	{
@@ -118,10 +173,6 @@ void AMSAICharacter::InitFromRow(FName InEnemyRow, float HealthMultiplier, float
 		}
 	}
 
-	if (USoundBase* Loop = EnemyRow.LoopSound.LoadSynchronous())
-	{
-		LoopAudio = UGameplayStatics::SpawnSoundAttached(Loop, GetRootComponent());
-	}
 	if (AMSAIController* AIC = Cast<AMSAIController>(GetController()))
 	{
 		AIC->ConfigureFromPawn();
@@ -296,11 +347,6 @@ void AMSAICharacter::SetCoverCrouch(bool bCrouch)
 	{
 		UnCrouch();
 	}
-	// Placeholder bodies have no animation: squash them to read as crouched.
-	if (bPlaceholder && GetMesh())
-	{
-		GetMesh()->SetRelativeScale3D(FVector(1.f, 1.f, bCrouch ? 0.62f : 1.f));
-	}
 }
 
 bool AMSAICharacter::TryMelee(AActor* Target)
@@ -351,24 +397,28 @@ void AMSAICharacter::HandleDamaged(UMSHealthComponent* InHealth, const FMSDamage
 
 void AMSAICharacter::HandleDied(UMSHealthComponent* InHealth, const FMSDamageInfo& KillingBlow)
 {
-	if (Weapon)
+	// Runs on the server (OnDied) and on clients (replicated death): game logic only on the server.
+	if (HasAuthority())
 	{
-		Weapon->SetTriggerHeld(false);
-		Weapon->DetachFromActor(FDetachmentTransformRules::KeepWorldTransform);
-		Weapon->SetLifeSpan(5.f);
-		Weapon = nullptr;
+		if (Weapon)
+		{
+			Weapon->SetTriggerHeld(false);
+			Weapon->DetachFromActor(FDetachmentTransformRules::KeepWorldTransform);
+			Weapon->SetLifeSpan(5.f);
+			Weapon = nullptr;
+		}
+		if (AController* C = GetController())
+		{
+			if (AMSAIController* AIC = Cast<AMSAIController>(C))
+			{
+				AIC->OnPawnDied();
+			}
+			C->UnPossess();
+		}
 	}
 	if (LoopAudio)
 	{
 		LoopAudio->FadeOut(1.f, 0.f);
-	}
-	if (AController* C = GetController())
-	{
-		if (AMSAIController* AIC = Cast<AMSAIController>(C))
-		{
-			AIC->OnPawnDied();
-		}
-		C->UnPossess();
 	}
 	GetCharacterMovement()->DisableMovement();
 	GetCapsuleComponent()->SetCollisionEnabled(ECollisionEnabled::NoCollision);
@@ -402,8 +452,11 @@ void AMSAICharacter::HandleDied(UMSHealthComponent* InHealth, const FMSDamageInf
 	{
 		UGameplayStatics::PlaySoundAtLocation(this, Death, GetActorLocation());
 	}
-	const UMSDataSubsystem* Data = UMSDataSubsystem::Get(this);
-	SetLifeSpan(Data ? Data->GetRules().CorpseLifetime : 20.f);
+	if (HasAuthority())
+	{
+		const UMSDataSubsystem* Data = UMSDataSubsystem::Get(this);
+		SetLifeSpan(Data ? Data->GetRules().CorpseLifetime : 20.f);
+	}
 }
 
 void AMSAICharacter::Tick(float DeltaSeconds)
@@ -411,7 +464,7 @@ void AMSAICharacter::Tick(float DeltaSeconds)
 	Super::Tick(DeltaSeconds);
 	MeleeCooldownLeft = FMath::Max(0.f, MeleeCooldownLeft - DeltaSeconds);
 	FlinchTimeLeft = FMath::Max(0.f, FlinchTimeLeft - DeltaSeconds);
-	if (Weapon && !IsDead())
+	if (Weapon && !IsDead() && HasAuthority())
 	{
 		// Keep the gun pointing at what we aim at.
 		const FVector From = WeaponAnchor->GetComponentLocation();

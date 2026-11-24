@@ -5,7 +5,9 @@
 #include "Data/MSDataTypes.h"
 #include "MSClaymore.generated.h"
 
-/** Directional mine: arms after a moment, triggers on hostiles in a cone in front. DT_Equipment "Claymore". */
+class UPointLightComponent;
+
+/** Directional mine: arms after a moment, triggers on hostiles in a cone in front. DT_Equipment "Claymore". Server logic, replicated. */
 UCLASS()
 class MODERNSURVIVAL_API AMSClaymore : public AActor
 {
@@ -13,18 +15,23 @@ class MODERNSURVIVAL_API AMSClaymore : public AActor
 
 public:
 	AMSClaymore();
+	/** Server only. */
 	void Arm(FName EquipmentRow, AController* InInstigator, EMSTeam InTeam);
 	virtual void Tick(float DeltaSeconds) override;
+	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
 
 protected:
 	void Detonate();
+	void BuildVisual();
+	UFUNCTION() void OnRep_Row() { BuildVisual(); }
 
 	UPROPERTY(Transient) TObjectPtr<AController> InstigatorController;
-	UPROPERTY(Transient) TObjectPtr<class UPointLightComponent> Blink;
-	FName RowName;
+	UPROPERTY(VisibleAnywhere, Category = "Claymore") TObjectPtr<UPointLightComponent> Blink;
+	UPROPERTY(ReplicatedUsing = OnRep_Row) FName RowName;
+	UPROPERTY(Replicated) bool bArmed = false;
 	EMSTeam Team = EMSTeam::Player;
 	float ArmLeft = 1.f;
 	float TriggerLeft = -1.f;
 	float CheckTimer = 0.f;
-	bool bArmed = false;
+	bool bVisualBuilt = false;
 };

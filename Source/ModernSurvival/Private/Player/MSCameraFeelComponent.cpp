@@ -56,7 +56,7 @@ void UMSCameraFeelComponent::AddTraumaAtLocation(UWorld* World, const FVector& L
 	{
 		const APlayerController* PC = It->Get();
 		const APawn* Pawn = PC ? PC->GetPawn() : nullptr;
-		if (!Pawn)
+		if (!Pawn || !PC->IsLocalController())
 		{
 			continue;
 		}
@@ -80,6 +80,14 @@ void UMSCameraFeelComponent::TickComponent(float DeltaTime, ELevelTick TickType,
 	const FMSPlayerFeelRow& Feel = Data->GetPlayerFeel();
 	const FMSLookRow& Look = Data->GetLook();
 	const float Dt = FMath::Min(DeltaTime, 0.1f);
+
+	if (!Pawn->IsLocallyControlled())
+	{
+		// Someone else's player: just point the head/gun where they aim (replicated view pitch).
+		Camera->SetRelativeLocation(FVector(0.f, 0.f, Feel.StandEyeHeight));
+		Camera->SetWorldRotation(Pawn->GetBaseAimRotation());
+		return;
+	}
 
 	// --- Recoil: apply pending kick over a few frames, then recover part of it.
 	if (Controller)

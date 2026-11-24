@@ -4,6 +4,7 @@
 #include "GameFramework/PlayerController.h"
 #include "GenericTeamAgentInterface.h"
 #include "Data/MSDataTypes.h"
+#include "Game/MSGameState.h"
 #include "MSPlayerController.generated.h"
 
 class UInputAction;
@@ -12,7 +13,6 @@ class UMSPauseMenuWidget;
 class UMSGameOverWidget;
 class UMSShopWidget;
 class UMSMainMenuWidget;
-struct FMSGameOverStats;
 
 /**
  * Input actions created at runtime so the game works without any editor-authored input assets.
@@ -68,6 +68,18 @@ public:
 	void ShowMainMenu();
 	UFUNCTION(BlueprintCallable, Category = "UI") void RestartMatch();
 	UFUNCTION(BlueprintCallable, Category = "UI") void ReturnToMainMenu();
+	bool CanRestart() const { return GetNetMode() != NM_Client; }
+
+	// --- Co-op sessions (listen server, direct IP; no online subsystem needed on LAN)
+	UFUNCTION(BlueprintCallable, Category = "Coop") void HostGame(const FString& MapPath);
+	UFUNCTION(BlueprintCallable, Category = "Coop") void JoinGame(const FString& Address);
+
+	// --- Shop: purchases are decided on the server
+	void RequestPurchase(FName ShopRow);
+	UFUNCTION(Server, Reliable) void ServerPurchase(FName ShopRow);
+	UFUNCTION(Client, Reliable) void ClientPurchaseResult(const FText& Message);
+	/** Server -> each player: show the game-over screen and save the best wave on that machine. */
+	UFUNCTION(Client, Reliable) void ClientGameOver(FMSGameOverStats Stats);
 
 	// --- Debug / play-test cheats (console)
 	UFUNCTION(Exec) void MSGiveCash(int32 Amount);
@@ -90,6 +102,7 @@ protected:
 	void BuildInput();
 	void AddMappingContexts();
 	void SetMenuInputMode(bool bMenu, bool bPauseGame);
+	bool CheatAllowed();
 
 	UPROPERTY(Transient) FMSInputActions Actions;
 	UPROPERTY(Transient) TObjectPtr<UInputMappingContext> Mapping;

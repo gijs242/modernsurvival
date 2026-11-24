@@ -17,6 +17,7 @@ AMSAirstrike::AMSAirstrike()
 	Flare->SetAttenuationRadius(600.f);
 	Flare->SetLightColor(FLinearColor(1.f, 0.1f, 0.05f));
 	Flare->SetCastShadows(false);
+	bReplicates = true;   // the flare is visible to everyone; bombs are server-side explosions
 }
 
 void AMSAirstrike::Begin(FName EquipmentRow, AController* InInstigator, EMSTeam InTeam)
@@ -31,12 +32,16 @@ void AMSAirstrike::Begin(FName EquipmentRow, AController* InInstigator, EMSTeam 
 void AMSAirstrike::Tick(float DeltaSeconds)
 {
 	Super::Tick(DeltaSeconds);
-	if (!bStarted)
+	if (!bStarted && HasAuthority())
+	{
+		return;
+	}
+	Flare->SetIntensity(FMath::Abs(FMath::Sin(GetWorld()->GetTimeSeconds() * 10.0)) * 20000.f);
+	if (!HasAuthority())
 	{
 		return;
 	}
 	const FMSEquipmentRow& Row = UMSDataSubsystem::Get(this)->GetEquipment(RowName);
-	Flare->SetIntensity(FMath::Abs(FMath::Sin(GetWorld()->GetTimeSeconds() * 10.0)) * 20000.f);
 	if (DelayLeft > 0.f)
 	{
 		DelayLeft -= DeltaSeconds;

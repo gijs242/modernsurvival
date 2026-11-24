@@ -34,6 +34,7 @@ private:
 	void DrawBanner(const AMSGameState* GS);
 	void DrawStragglers(const AMSGameState* GS);
 	void DrawHelicopterBar();
+	void DrawTeammates(const AMSPlayerCharacter* Self);
 
 	void Text(const FString& Str, float X, float Y, const FLinearColor& Color, float Scale, bool bCenter = false, bool bRight = false, bool bLarge = false);
 	void Bar(float X, float Y, float W, float H, float Fraction, const FLinearColor& Fill);

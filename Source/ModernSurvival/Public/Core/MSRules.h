@@ -255,6 +255,59 @@ namespace MSRules
 		return std::max(0.001f, Score);
 	}
 
+	// ---------------------------------------------------------------- Co-op
+
+	struct FViewer
+	{
+		FVec3 Position;
+		FVec3 Forward;
+		float HalfFovDeg = 45.f;
+		bool bSeesPoint = false;   // result of the engine's line-of-sight trace to the candidate
+	};
+
+	// A spawn must be hidden from EVERY player and not too close to any of them; it is scored for
+	// the nearest player (so waves still close in on whoever is closest). Negative = not allowed.
+	inline float ScoreSpawnPointMulti(const FViewer* Viewers, int32_t Count, const FVec3& Point, const FSpawnParams& P)
+	{
+		if (Count <= 0) return -1.f;
+		int32_t Nearest = -1;
+		float NearestDist = 0.f;
+		for (int32_t I = 0; I < Count; ++I)
+		{
+			FSpawnParams ViewerParams = P;
+			ViewerParams.ViewHalfAngleDeg = Viewers[I].HalfFovDeg;
+			const float Dist = (Point - Viewers[I].Position).Length();
+			if (Dist < P.MinDistance) return -1.f;
+			if (Viewers[I].bSeesPoint && !IsOutsideViewCone(Viewers[I].Position, Viewers[I].Forward, Point, ViewerParams)) return -1.f;
+			if (Nearest < 0 || Dist < NearestDist)
+			{
+				Nearest = I;
+				NearestDist = Dist;
+			}
+		}
+		FSpawnParams Pn = P;
+		Pn.ViewHalfAngleDeg = Viewers[Nearest].HalfFovDeg;
+		return ScoreSpawnPoint(Viewers[Nearest].Position, Viewers[Nearest].Forward, Point, Viewers[Nearest].bSeesPoint, Pn);
+	}
+
+	// Wave size and max-alive grow with the number of players (PerExtraPlayer = +60% => 1.6x for 2).
+	inline int32_t CoopScale(int32_t Base, int32_t Players, float PerExtraPlayer)
+	{
+		if (Players <= 1 || Base <= 0) return Base;
+		const float Scale = 1.f + static_cast<float>(Players - 1) * PerExtraPlayer;
+		return static_cast<int32_t>(std::lround(static_cast<float>(Base) * Scale));
+	}
+
+	// MW3 rule: the game ends when nobody is left standing (everyone dead or downed).
+	inline bool IsTeamWiped(int32_t PlayersStanding) { return PlayersStanding <= 0; }
+
+	// Revive progress (0..1) while a teammate holds Interact on you; resets when they let go.
+	inline float ReviveStep(float Progress, bool bHolding, float ReviveTime, float Dt)
+	{
+		if (!bHolding) return 0.f;
+		return Clamp(Progress + Dt / (ReviveTime > 0.01f ? ReviveTime : 0.01f), 0.f, 1.f);
+	}
+
 	// ---------------------------------------------------------------- Feel
 
 	inline float FireInterval(float RoundsPerMinute) { return RoundsPerMinute > 0.f ? 60.f / RoundsPerMinute : 1.f; }

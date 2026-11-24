@@ -458,6 +458,14 @@ struct MODERNSURVIVAL_API FMSGameRulesRow : public FTableRowBase
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "World") FName StartingPrimary = "SMG_Viper";
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "World") int32 StartingFrags = 2;
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "World") int32 MaxWeaponsCarried = 2;
+
+	// Co-op ------------------------------------------------------------------------------------
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Coop") float CoopEnemiesPerExtraPlayer = 0.6f;   // +60% enemies per extra player
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Coop") float CoopMaxAlivePerExtraPlayer = 0.4f;
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Coop") float BleedOutTime = 30.f;               // downed with no revive -> dead
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Coop") float ReviveTime = 3.f;                  // hold Interact on a downed teammate
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Coop") float ReviveRange = 170.f;
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Coop") bool bRespawnDeadAtIntermission = true;  // dead teammates come back at the next break
 };
 
 // ------------------------------------------------------------------------------------------------

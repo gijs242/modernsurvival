@@ -1,6 +1,5 @@
 #include "Game/MSGameInstance.h"
 
-#include "Game/MSGameState.h"
 #include "Kismet/GameplayStatics.h"
 
 static const TCHAR* GSaveSlot = TEXT("ModernSurvival");
@@ -46,10 +45,4 @@ void UMSGameInstance::Save()
 	{
 		UGameplayStatics::SaveGameToSlot(SaveData, GSaveSlot, 0);
 	}
-}
-
-float AMSGameState::GetPhaseTimeLeft() const
-{
-	const UWorld* World = GetWorld();
-	return World ? FMath::Max(0.f, static_cast<float>(PhaseEndTime - World->GetTimeSeconds())) : 0.f;
 }

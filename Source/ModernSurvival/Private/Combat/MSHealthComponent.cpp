@@ -5,11 +5,40 @@
 #include "Engine/World.h"
 #include "GameFramework/Actor.h"
 #include "GameFramework/Controller.h"
+#include "Net/UnrealNetwork.h"
 
 UMSHealthComponent::UMSHealthComponent()
 {
 	PrimaryComponentTick.bCanEverTick = true;
 	PrimaryComponentTick.TickInterval = 0.05f;
+	SetIsReplicatedByDefault(true);
+}
+
+void UMSHealthComponent::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
+{
+	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
+	DOREPLIFETIME(UMSHealthComponent, Team);
+	DOREPLIFETIME(UMSHealthComponent, MaxHealth);
+	DOREPLIFETIME(UMSHealthComponent, Health);
+	DOREPLIFETIME(UMSHealthComponent, Armor);
+	DOREPLIFETIME(UMSHealthComponent, MaxArmor);
+	DOREPLIFETIME(UMSHealthComponent, bDead);
+}
+
+bool UMSHealthComponent::HasAuthorityOver() const
+{
+	const AActor* Owner = GetOwner();
+	return Owner && Owner->HasAuthority();
+}
+
+void UMSHealthComponent::OnRep_Dead()
+{
+	if (bDead)
+	{
+		FMSDamageInfo Info;
+		Info.SourceTeam = EMSTeam::Neutral;
+		OnDied.Broadcast(this, Info);
+	}
 }
 
 UMSHealthComponent* UMSHealthComponent::Find(const AActor* Actor)
@@ -78,9 +107,9 @@ float UMSHealthComponent::GetRecentDamage(float Window) const
 FMSHitReport UMSHealthComponent::ApplyDamage(const FMSDamageInfo& InInfo)
 {
 	FMSHitReport Report;
-	if (bDead || InInfo.Amount <= 0.f)
+	if (bDead || InInfo.Amount <= 0.f || !HasAuthorityOver())
 	{
-		return Report;
+		return Report;   // damage is only ever applied on the server
 	}
 
 	// Friendly fire: same team never hurts unless it is self-damage from your own explosive.
@@ -192,7 +221,7 @@ void UMSHealthComponent::Revive(float NewHealth)
 void UMSHealthComponent::TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction)
 {
 	Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
-	if (!bDead && RegenRate > 0.f && Health < MaxHealth)
+	if (!bDead && RegenRate > 0.f && Health < MaxHealth && HasAuthorityOver())
 	{
 		Health = MSRules::RegenStep(Health, MaxHealth, GetTimeSinceDamage(), RegenDelay, RegenRate, DeltaTime);
 	}

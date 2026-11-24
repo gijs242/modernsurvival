@@ -44,6 +44,7 @@ public:
 
 	UMSHealthComponent* GetHealth() const { return Health; }
 	virtual void Tick(float DeltaSeconds) override;
+	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
 
 protected:
 	virtual void BeginPlay() override;
@@ -53,6 +54,8 @@ protected:
 	void FireRocket();
 
 	UFUNCTION() void HandleDied(UMSHealthComponent* InHealth, const FMSDamageInfo& KillingBlow);
+	/** Clients: build the body/rotor/sound from the replicated row. */
+	UFUNCTION() void OnRep_EnemyRow();
 
 	UPROPERTY(VisibleAnywhere, Category = "Components") TObjectPtr<USphereComponent> Body;
 	UPROPERTY(VisibleAnywhere, Category = "Components") TObjectPtr<UMSHealthComponent> Health;
@@ -62,7 +65,7 @@ protected:
 	UPROPERTY(Transient) TObjectPtr<AMSWeapon> Gun;
 	UPROPERTY(Transient) TObjectPtr<UAudioComponent> RotorAudio;
 
-	FName EnemyRowName;
+	UPROPERTY(ReplicatedUsing = OnRep_EnemyRow) FName EnemyRowName;
 	FMSEnemyRow Row;
 	float DamageMultiplier = 1.f;
 	float AccuracyMultiplier = 1.f;

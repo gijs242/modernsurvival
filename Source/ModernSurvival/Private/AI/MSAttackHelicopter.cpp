@@ -14,6 +14,7 @@
 #include "Engine/StaticMesh.h"
 #include "Engine/World.h"
 #include "Kismet/GameplayStatics.h"
+#include "Net/UnrealNetwork.h"
 #include "TimerManager.h"
 
 AMSAttackHelicopter::AMSAttackHelicopter()
@@ -33,6 +34,26 @@ AMSAttackHelicopter::AMSAttackHelicopter()
 	Health = CreateDefaultSubobject<UMSHealthComponent>(TEXT("Health"));
 	Health->Team = EMSTeam::Enemy;
 	AutoPossessAI = EAutoPossessAI::Disabled;
+	bReplicates = true;
+	SetReplicateMovement(true);
+}
+
+void AMSAttackHelicopter::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
+{
+	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
+	DOREPLIFETIME(AMSAttackHelicopter, EnemyRowName);
+}
+
+void AMSAttackHelicopter::OnRep_EnemyRow()
+{
+	const UMSDataSubsystem* Data = UMSDataSubsystem::Get(this);
+	const FMSEnemyRow* Found = Data ? Data->FindEnemy(EnemyRowName) : nullptr;
+	Row = Found ? *Found : FMSEnemyRow();
+	BuildVisual();
+	if (USoundBase* Loop = Row.LoopSound.LoadSynchronous())
+	{
+		RotorAudio = UGameplayStatics::SpawnSoundAttached(Loop, GetRootComponent());
+	}
 }
 
 void AMSAttackHelicopter::BeginPlay()
@@ -40,6 +61,10 @@ void AMSAttackHelicopter::BeginPlay()
 	Super::BeginPlay();
 	Health->OnDied.AddDynamic(this, &AMSAttackHelicopter::HandleDied);
 	OrbitDirection = FMath::RandBool() ? 1.f : -1.f;
+	if (!HasAuthority())
+	{
+		return;
+	}
 	GetWorldTimerManager().SetTimerForNextTick(FTimerDelegate::CreateWeakLambda(this, [this]()
 	{
 		if (EnemyRowName.IsNone())
@@ -228,6 +253,10 @@ void AMSAttackHelicopter::Tick(float DeltaSeconds)
 	{
 		Rotor->AddLocalRotation(FRotator(0.f, 1600.f * DeltaSeconds, 0.f));
 	}
+	if (!HasAuthority())
+	{
+		return;   // flight and weapons run on the server; movement replicates
+	}
 	if (State == EMSHeliState::Dying)
 	{
 		DyingTime += DeltaSeconds;
@@ -286,16 +315,22 @@ void AMSAttackHelicopter::Tick(float DeltaSeconds)
 void AMSAttackHelicopter::HandleDied(UMSHealthComponent* InHealth, const FMSDamageInfo& KillingBlow)
 {
 	State = EMSHeliState::Dying;
-	if (Gun)
+	if (GetNetMode() != NM_DedicatedServer)
 	{
-		Gun->SetTriggerHeld(false);
-		Gun->Destroy();
-		Gun = nullptr;
+		UMSFXLibrary::SpawnExplosion(GetWorld(), GetActorLocation(), 400.f, nullptr);
 	}
-	UMSFXLibrary::SpawnExplosion(GetWorld(), GetActorLocation(), 400.f, nullptr);
 	if (RotorAudio)
 	{
 		RotorAudio->SetPitchMultiplier(0.7f);
 	}
-	SetLifeSpan(8.f);
+	if (HasAuthority())
+	{
+		if (Gun)
+		{
+			Gun->SetTriggerHeld(false);
+			Gun->Destroy();
+			Gun = nullptr;
+		}
+		SetLifeSpan(8.f);
+	}
 }

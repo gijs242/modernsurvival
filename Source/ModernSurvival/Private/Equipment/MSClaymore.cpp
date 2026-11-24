@@ -7,6 +7,7 @@
 #include "FX/MSFXLibrary.h"
 #include "Components/PointLightComponent.h"
 #include "Kismet/GameplayStatics.h"
+#include "Net/UnrealNetwork.h"
 
 AMSClaymore::AMSClaymore()
 {
@@ -20,15 +21,24 @@ AMSClaymore::AMSClaymore()
 	Blink->SetAttenuationRadius(120.f);
 	Blink->SetLightColor(FLinearColor::Red);
 	Blink->SetCastShadows(false);
+	bReplicates = true;
 }
 
-void AMSClaymore::Arm(FName EquipmentRow, AController* InInstigator, EMSTeam InTeam)
+void AMSClaymore::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
 {
-	RowName = EquipmentRow;
-	InstigatorController = InInstigator;
-	Team = InTeam;
+	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
+	DOREPLIFETIME(AMSClaymore, RowName);
+	DOREPLIFETIME(AMSClaymore, bArmed);
+}
+
+void AMSClaymore::BuildVisual()
+{
+	if (bVisualBuilt || RowName.IsNone() || GetNetMode() == NM_DedicatedServer)
+	{
+		return;
+	}
+	bVisualBuilt = true;
 	const FMSEquipmentRow& Row = UMSDataSubsystem::Get(this)->GetEquipment(RowName);
-	ArmLeft = Row.ArmTime;
 	// Curved plate on two little legs, facing +X.
 	UMSFXLibrary::AddPlaceholderShape(this, nullptr, TEXT("Cube"), FTransform(FRotator(0, 0, 0), FVector(0, 0, 14), FVector(0.05f, 0.24f, 0.13f)), Row.PlaceholderColor, false);
 	UMSFXLibrary::AddPlaceholderShape(this, nullptr, TEXT("Cylinder"), FTransform(FRotator(15, 0, 0), FVector(-4, -8, 4), FVector(0.01f, 0.01f, 0.1f)), Row.PlaceholderColor, false);
@@ -36,10 +46,27 @@ void AMSClaymore::Arm(FName EquipmentRow, AController* InInstigator, EMSTeam InT
 	UGameplayStatics::PlaySoundAtLocation(this, LoadObject<USoundBase>(nullptr, TEXT("/Game/Audio/mag_in.mag_in")), GetActorLocation(), 0.5f);
 }
 
+void AMSClaymore::Arm(FName EquipmentRow, AController* InInstigator, EMSTeam InTeam)
+{
+	RowName = EquipmentRow;
+	InstigatorController = InInstigator;
+	Team = InTeam;
+	ArmLeft = UMSDataSubsystem::Get(this)->GetEquipment(RowName).ArmTime;
+	BuildVisual();
+}
+
 void AMSClaymore::Tick(float DeltaSeconds)
 {
 	Super::Tick(DeltaSeconds);
 	if (RowName.IsNone())
+	{
+		return;
+	}
+	if (bArmed)
+	{
+		Blink->SetIntensity(FMath::Fmod(GetWorld()->GetTimeSeconds(), 1.0) < 0.1 ? 800.f : 0.f);
+	}
+	if (!HasAuthority())
 	{
 		return;
 	}
@@ -50,8 +77,6 @@ void AMSClaymore::Tick(float DeltaSeconds)
 		bArmed = ArmLeft <= 0.f;
 		return;
 	}
-	// Armed blink.
-	Blink->SetIntensity(FMath::Fmod(GetWorld()->GetTimeSeconds(), 1.0) < 0.1 ? 800.f : 0.f);
 	if (TriggerLeft >= 0.f)
 	{
 		TriggerLeft -= DeltaSeconds;

@@ -5,6 +5,7 @@
 #include "Combat/MSHealthComponent.h"
 #include "Core/MSRules.h"
 #include "FX/MSFXLibrary.h"
+#include "Game/MSGameState.h"
 #include "Player/MSCameraFeelComponent.h"
 #include "ModernSurvival.h"
 #include "Components/PrimitiveComponent.h"
@@ -64,6 +65,20 @@ FMSHitReport UMSCombatLibrary::DealDamage(AActor* Target, const FMSDamageInfo& I
 	return Report;
 }
 
+void UMSCombatLibrary::PlayExplosionCosmetics(UWorld* World, const FVector& Location, float Radius, UNiagaraSystem* FX, USoundBase* Sound, float Trauma, float TraumaRadius)
+{
+	if (!World || World->GetNetMode() == NM_DedicatedServer)
+	{
+		return;
+	}
+	UMSFXLibrary::SpawnExplosion(World, Location, Radius, FX);
+	if (UMSAudioSubsystem* Audio = World->GetSubsystem<UMSAudioSubsystem>())
+	{
+		Audio->PlayExplosion(Location, Sound);
+	}
+	UMSCameraFeelComponent::AddTraumaAtLocation(World, Location, Trauma, TraumaRadius);
+}
+
 bool UMSCombatLibrary::IsHeadshot(const FHitResult& Hit)
 {
 	if (const UPrimitiveComponent* Comp = Hit.GetComponent())
@@ -103,12 +118,19 @@ void UMSCombatLibrary::Explode(const UObject* WorldContext, FVector Location, co
 		return;
 	}
 
-	UMSFXLibrary::SpawnExplosion(World, Location, Params.OuterRadius, Params.FX);
-	if (UMSAudioSubsystem* Audio = World->GetSubsystem<UMSAudioSubsystem>())
+	if (World->GetNetMode() == NM_Client)
 	{
-		Audio->PlayExplosion(Location, Params.Sound);
+		return;   // explosions are server-side; clients get the effects through the game state multicast
 	}
-	UMSCameraFeelComponent::AddTraumaAtLocation(World, Location, Params.Trauma, Params.TraumaRadius);
+	AMSGameState* GS = World->GetGameState<AMSGameState>();
+	if (GS && World->GetNetMode() != NM_Standalone)
+	{
+		GS->MulticastExplosionFX(Location, Params.OuterRadius, Params.FX, Params.Sound, Params.Trauma, Params.TraumaRadius);
+	}
+	else
+	{
+		PlayExplosionCosmetics(World, Location, Params.OuterRadius, Params.FX, Params.Sound, Params.Trauma, Params.TraumaRadius);
+	}
 
 	// Gather everything in range once: damageables get damage, physics bodies get pushed.
 	TArray<FOverlapResult> Overlaps;

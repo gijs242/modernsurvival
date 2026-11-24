@@ -14,6 +14,7 @@
 #include "Engine/Canvas.h"
 #include "Engine/Engine.h"
 #include "Engine/Font.h"
+#include "GameFramework/PlayerState.h"
 #include "Engine/World.h"
 #include "EngineUtils.h"
 
@@ -92,6 +93,7 @@ void AMSHUD::DrawHUD()
 	DrawBanner(GS);
 	DrawStragglers(GS);
 	DrawHelicopterBar();
+	DrawTeammates(Player);
 	if (Player && !Player->IsDead())
 	{
 		DrawCrosshair(Player, Look);
@@ -195,7 +197,16 @@ void AMSHUD::DrawWaveInfo(const AMSGameState* GS, const AMSPlayerCharacter* Play
 	{
 		Text(FString::Printf(TEXT("Next wave in %d"), FMath::CeilToInt(GS->GetPhaseTimeLeft())), X, Y, Amber, 1.1f);
 		Y += 28.f * S;
-		Text(TEXT("Hold [N] to start now (bonus cash)"), X, Y, Dim, 0.85f);
+		if (GS->IsCoop())
+		{
+			const bool bReady = Player && Player->IsReadyToSkip();
+			Text(FString::Printf(TEXT("%s  (%d/%d ready)"), bReady ? TEXT("READY - hold [N] to cancel") : TEXT("Hold [N] to ready up (bonus cash)"),
+				GS->PlayersReady, GS->PlayersInMatch), X, Y, bReady ? FLinearColor(0.55f, 0.95f, 0.45f, 1.f) : Dim, 0.85f);
+		}
+		else
+		{
+			Text(TEXT("Hold [N] to start now (bonus cash)"), X, Y, Dim, 0.85f);
+		}
 		if (Player && Player->GetSkipHoldFraction() > 0.f)
 		{
 			Bar(X, Y + 26.f * S, 220.f * S, 5.f * S, Player->GetSkipHoldFraction(), Amber);
@@ -295,8 +306,28 @@ void AMSHUD::DrawPrompts(const AMSPlayerCharacter* Player, const AMSGameState* G
 	}
 	if (Player->IsDowned())
 	{
-		Text(TEXT("LAST STAND"), CX, CY - 160.f * S, Red, 1.5f, true, false, true);
-		Text(FString::Printf(TEXT("Survive %.1fs to get back up"), Player->GetLastStandTimeLeft()), CX, CY - 115.f * S, White, 1.f, true);
+		if (Player->CanSelfRevive())
+		{
+			Text(TEXT("LAST STAND"), CX, CY - 160.f * S, Red, 1.5f, true, false, true);
+			Text(FString::Printf(TEXT("Survive %.1fs to get back up"), Player->GetDownedTimeLeft()), CX, CY - 115.f * S, White, 1.f, true);
+		}
+		else
+		{
+			Text(TEXT("DOWN"), CX, CY - 160.f * S, Red, 1.5f, true, false, true);
+			Text(FString::Printf(TEXT("A teammate must revive you  -  bleeding out in %.0fs"), Player->GetDownedTimeLeft()), CX, CY - 115.f * S, White, 1.f, true);
+		}
+		if (Player->GetReviveProgress() > 0.f)
+		{
+			Text(TEXT("Being revived..."), CX, CY + 140.f * S, FLinearColor(0.55f, 0.95f, 0.45f, 1.f), 0.9f, true);
+			Bar(CX - 110.f * S, CY + 168.f * S, 220.f * S, 6.f * S, Player->GetReviveProgress(), FLinearColor(0.55f, 0.95f, 0.45f, 1.f));
+		}
+	}
+	if (const AMSPlayerCharacter* Mate = Player->GetReviveCandidate())
+	{
+		if (Mate->GetReviveProgress() > 0.f)
+		{
+			Bar(CX - 110.f * S, CY + 140.f * S, 220.f * S, 6.f * S, Mate->GetReviveProgress(), FLinearColor(0.55f, 0.95f, 0.45f, 1.f));
+		}
 	}
 }
 
@@ -306,7 +337,7 @@ void AMSHUD::DrawBanner(const AMSGameState* GS)
 	{
 		return;
 	}
-	const float Age = static_cast<float>(GetWorld()->GetTimeSeconds() - GS->WaveBannerTime);
+	const float Age = static_cast<float>(GS->GetMatchTime() - GS->WaveBannerTime);
 	if (Age < 0.f || Age > 3.5f)
 	{
 		return;
@@ -340,6 +371,60 @@ void AMSHUD::DrawStragglers(const AMSGameState* GS)
 		DrawLine(P.X + R, P.Y, P.X, P.Y + R, C, 2.f * S);
 		DrawLine(P.X, P.Y + R, P.X - R, P.Y, C, 2.f * S);
 		DrawLine(P.X - R, P.Y, P.X, P.Y - R, C, 2.f * S);
+	}
+}
+
+void AMSHUD::DrawTeammates(const AMSPlayerCharacter* Self)
+{
+	float Y = 150.f * S;
+	for (TActorIterator<AMSPlayerCharacter> It(GetWorld()); It; ++It)
+	{
+		const AMSPlayerCharacter* Mate = *It;
+		if (Mate == Self || !Mate->GetHealth())
+		{
+			continue;
+		}
+		const APlayerState* PS = Mate->GetPlayerState();
+		const FString Name = PS ? PS->GetPlayerName() : FString(TEXT("Teammate"));
+		const bool bDead = Mate->IsDead();
+		const bool bDown = Mate->IsDowned();
+		// Panel (top left, under the wave info).
+		const FLinearColor Col = bDead ? Dim : (bDown ? Red : FLinearColor(0.55f, 0.8f, 1.f, 1.f));
+		Text(FString::Printf(TEXT("%s%s"), *Name, bDead ? TEXT("  (dead - back next break)") : (bDown ? TEXT("  DOWN!") : TEXT(""))), 40.f * S, Y, Col, 0.85f);
+		Bar(40.f * S, Y + 24.f * S, 160.f * S, 4.f * S, bDead ? 0.f : Mate->GetHealth()->GetHealthFraction(), Col);
+		Y += 40.f * S;
+		// World marker above their head.
+		if (bDead)
+		{
+			continue;
+		}
+		const FVector P = Project(Mate->GetActorLocation() + FVector(0, 0, bDown ? 60.f : 120.f));
+		if (P.Z <= 0.f)
+		{
+			continue;
+		}
+		const float Dist = Self ? FVector::Dist(Self->GetActorLocation(), Mate->GetActorLocation()) / 100.f : 0.f;
+		if (bDown)
+		{
+			const float R = 10.f * S;
+			DrawRect(Red, P.X - R * 0.3f, P.Y - R, R * 0.6f, R * 2.f);
+			DrawRect(Red, P.X - R, P.Y - R * 0.3f, R * 2.f, R * 0.6f);
+			Text(FString::Printf(TEXT("REVIVE  %.0fm  %.0fs"), Dist, Mate->GetDownedTimeLeft()), P.X, P.Y + 14.f * S, Red, 0.75f, true);
+			if (Mate->GetReviveProgress() > 0.f)
+			{
+				Bar(P.X - 40.f * S, P.Y + 40.f * S, 80.f * S, 4.f * S, Mate->GetReviveProgress(), FLinearColor(0.55f, 0.95f, 0.45f, 1.f));
+			}
+		}
+		else
+		{
+			const float R = 6.f * S;
+			const FLinearColor C(0.55f, 0.8f, 1.f, 0.85f);
+			DrawLine(P.X, P.Y - R, P.X + R, P.Y, C, 2.f * S);
+			DrawLine(P.X + R, P.Y, P.X, P.Y + R, C, 2.f * S);
+			DrawLine(P.X, P.Y + R, P.X - R, P.Y, C, 2.f * S);
+			DrawLine(P.X - R, P.Y, P.X, P.Y - R, C, 2.f * S);
+			Text(Name, P.X, P.Y - 30.f * S, C, 0.7f, true);
+		}
 	}
 }
 

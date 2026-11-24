@@ -10,6 +10,10 @@ waves you get a 30-second break (hold **N** to skip it). Three buy stations sell
 **equipment** (armor, frags, claymores, sentry gun) and **air support** (airstrike, AI squad).
 You have regenerating health, sprint, slide and aim-down-sights, plus one last stand per game.
 
+Play solo or **2-player co-op** (listen server, join by IP from the main menu). In co-op a downed
+player can be revived by their teammate, the dead respawn at the next break, and the game ends
+only when the whole team is down.
+
 Maps:
 - **Test Range**: grey-box arena for tuning.
 - **Lindenborg**: the real rsg de Borgen school building in Leek (NL), at true scale from public
@@ -26,7 +30,8 @@ Maps:
 1. Generate project files, then build `ModernSurvivalEditor` with UE 5.8.
 2. Open the project and run `Scripts/setup_project.py` from the Output Log (Python). This imports
    the placeholder audio, weapons and data tables, builds the enemy StateTree and builds the maps.
-3. Open `/Game/Maps/L_TestGrey` and press Play.
+3. Open `/Game/Maps/L_TestGrey` and press Play. For co-op in the editor, set Number of Players
+   to 2 and Net Mode to "Play As Listen Server".
 
 ## Controls
 
@@ -38,7 +43,7 @@ Maps:
 | Crouch, slide while sprinting | C or Ctrl | B |
 | Jump | Space | A |
 | Reload | R | X |
-| Use buy station | E | D-pad down |
+| Use buy station / revive teammate (hold) | E | D-pad down |
 | Switch weapon | 1, 2, mouse wheel | Y |
 | Melee | V | R3 |
 | Frag (hold to cook) | G | RB |

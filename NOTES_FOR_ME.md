@@ -10,7 +10,7 @@ there would be one, but no Unreal tools were attached) and no access to your com
 
 | Check | Status |
 |---|---|
-| Engine-free gameplay rules (`MSRules.h`) unit tests | **Ran: 106 checks pass** (g++, `-Werror -Wconversion`). CI runs them on every push. |
+| Engine-free gameplay rules (`MSRules.h`) unit tests | **Ran: 119 checks pass** (g++, `-Werror -Wconversion`). CI runs them on every push. |
 | Tuning CSVs vs C++ row structs, cross-references | **Ran: OK** (`python3 Tools/make_data.py --check`, also in CI). |
 | Include and generated-header sanity over all 78 C++ files | **Ran: OK** (script, no engine). |
 | Lindenborg data pipeline (3D BAG + AHN + BGT -> layout) | **Ran: OK**. Plan previews are in `Docs/`. |
@@ -138,15 +138,54 @@ Useful console commands during play: `MSGiveCash 10000`, `MSGiveAll`, `MSGod`, `
   hall on the south side; buy stations are in the hall and on the forecourt.
 - `Docs/lindenborg_plan_ground.png` / `_first.png` show the layout from above.
 
+**Co-op (2 players, MW3-style)**
+- *Quick test in the editor:* Play button ▸ ⋮ ▸ **Number of Players = 2**, **Net Mode = Play As
+  Listen Server**, then Play. Two windows open: the host and a client.
+- *Real test on two PCs (same LAN, or the host forwards UDP port 7777):* the host clicks
+  **HOST CO-OP** in the main menu; the other player types the host's IP in the box and clicks
+  **JOIN CO-OP**. There is no Steam or online lobby yet.
+- Rules:
+  - A lethal hit puts you **down** instead of killing you. You crawl with a pistol and can
+    still shoot.
+  - Your teammate holds **E** next to you for 3 s to revive you; a bar shows the progress on
+    both screens.
+  - You **bleed out** after 30 s. If you still have your last stand left, you get up by
+    yourself after 10 s instead (as in solo).
+  - A dead player **respawns at the next break** with the starting loadout and keeps their
+    cash. The game is over only when **both players are down or dead** at the same time.
+  - Each extra player makes a wave **+60 % bigger**, with up to +40 % more enemies alive at
+    once (`GameRules` row: `CoopEnemiesPerExtraPlayer`, `CoopMaxAlivePerExtraPlayer`;
+    bleed-out, revive time and range are there too).
+  - Enemies spawn only where **neither** player can see them. AI picks the nearest player.
+  - Each player has their own cash and shop. Skipping the break needs **both** players to
+    hold N: the HUD shows "(1/2 ready)".
+  - HUD: teammate panel (name, health, downed or dead) and a marker over your teammate, which
+    turns red with **REVIVE** when they are down.
+  - Only the host can restart from the game-over screen and use the `MS*` cheat commands.
+- What to check: hits and kills count for the client; the client's cash and ammo update right
+  after buying; explosions, airstrikes and the helicopter look the same on both screens; the
+  client sees the host's gun and shots, and the other way round.
+
 ## 4. Decisions I made (change any of them)
 
-- **Single-player first.** MW3 Survival is co-op; this is built for one player. The code is
-  server-authoritative in spirit (game mode owns waves and cash), but nothing is replicated.
-  Adding co-op is a separate milestone.
+- **Two-player co-op, listen server.** Solo still works the same (a standalone game). The game
+  mode, waves, cash, damage and AI run on the host; the second player joins by IP. See the co-op
+  section at the end of section 3 for the rules and the network design.
 - **Lyra / Game Animation Sample are used for art and animation, not code.** Lyra's gameplay
   stack (GAS, experiences, modular game features) would swallow this project, so the shooter
   systems are custom C++ as you asked. GASP/Lyra animations plug in through the enemy row
   (`SkeletalMesh` + `AnimClass`) and the view-model pivot (see section 5).
+- **Co-op network design (trust over anti-cheat).** This is a 2-player game with a friend,
+  so feel wins over cheat protection:
+  - Player movement is client-authoritative: the server accepts the client's position, so
+    sprint, slide and mantle never rubber-band.
+  - Shooting is predicted: the client fires, recoils and shows the hitmarker at once. It then
+    sends the exact shot directions; the server re-traces them and applies the damage.
+  - Cash, purchases, health, waves and AI are server-only. The client asks, and the server
+    answers and replicates.
+  - Not done: Steam or any online subsystem (direct IP only), a dedicated server (it should
+    work but is untested), voice chat, more than 2 players (`MaxPlayers=2` in
+    `DefaultGame.ini`; the code scales to more).
 - **Feel is data:** every number lives in `Data/*.csv` → DataTables (`/Game/Data/DT_*`). Recoil
   spray shapes are curves in `Data/FeelCurves.csv`. Edit the CSV and run `MS.ReloadData` in
   PIE (CSV fallback), or edit the DataTable asset directly. After editing a DataTable in the
@@ -272,8 +311,8 @@ renovation was later stopped.
 ## 8. Questions for you
 
 Answered: main entrance faces south (yes); north-west block = roofed bike storage; neighbouring
-campus building stays non-playable (it remains an LoD1 backdrop block); co-op = yes (being built
-next, see the co-op section once it lands).
+campus building stays non-playable (it remains an LoD1 backdrop block); co-op = yes (built: see
+"Co-op" at the end of section 3).
 
 Still open:
 1. Where are the aula/canteen, gym(s), stairs and corridors, and where exactly along the south
@@ -291,6 +330,8 @@ Still open:
 | `AI/MSEnvQuery.cpp` | `UEnvQueryTest` members (`Cost`, `ValidItemType`, `FloatValueMin`), `AddItemData<UEnvQueryItemType_Point>` | Compare with `EnvQueryTest.h` / engine tests such as `EnvQueryTest_Distance.cpp`. |
 | `Tests/MSAutomationTests.cpp` | `EAutomationTestFlags` | Use whatever the engine's own tests use in 5.8. |
 | `Data/MSDataSubsystem.cpp` | `UDataTable::RowStruct` assignment, `CreateTableFromCSVString` (editor only) | Use `UDataTable::RowStruct` setter if it became private. |
+| `Weapons/MSWeapon.cpp`, `Player/*`, `AI/*` | `SetNetUpdateFrequency` (was the `NetUpdateFrequency` property before 5.5) | Use whichever compiles; it only changes how often actors send updates. |
+| `Player/MSPlayerCharacter.cpp` | CharacterMovement `bIgnoreClientMovementErrorChecksAndCorrection`, `bServerAcceptClientAuthoritativePosition` | If renamed, look in `CharacterMovementComponent.h`. Without them co-op still works but may rubber-band. |
 | Any | Deprecation warnings | Harmless; fix later. |
 
 ## 10. Credits / licences of placeholder assets
@@ -314,6 +355,8 @@ Still open:
 3. **Lindenborg layout info** (section 8): a photo of the fire-escape plans
    (vluchtplannen) per floor, photos of the entrance, aula and corridors, and any measurements
    (corridor width, floor height). Or the TenderNed renovation drawings if you can download them.
-4. **Your answers** to the questions in section 8 (entrance side, NW block, Nijeborg, co-op).
+4. **Your answers** to the two open questions in section 8 (room layout, floor height).
 5. **Git LFS:** turn it on for the repo before committing `.uasset`/`.umap` files
    (`.gitattributes` is ready).
+6. **Co-op test partner:** after it compiles, one session with two players (or PIE with
+   2 players) to check the feel on the client side.

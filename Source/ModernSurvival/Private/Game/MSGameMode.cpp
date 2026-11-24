@@ -7,7 +7,6 @@
 #include "Game/MSGameInstance.h"
 #include "Game/MSGameState.h"
 #include "Game/MSSpawnPoint.h"
-#include "Look/MSLookManager.h"
 #include "ModernSurvival.h"
 #include "Player/MSPlayerCharacter.h"
 #include "Player/MSPlayerController.h"
@@ -44,24 +43,14 @@ void AMSGameMode::StartPlay()
 	{
 		UE_LOG(LogMS, Warning, TEXT("No MSSpawnPoint actors in this map: enemies will spawn at random navmesh points out of view."));
 	}
-	// Maps can place their own look manager (e.g. Lindenborg uses the "Abandoned" grade).
-	if (!TActorIterator<AMSLookManager>(World))
-	{
-		FActorSpawnParameters Params;
-		Params.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
-		World->SpawnActor<AMSLookManager>(AMSLookManager::StaticClass(), FTransform::Identity, Params);
-	}
-
+	// The colour grade (AMSLookManager) is spawned per machine by AMSPlayerController.
 	const UMSDataSubsystem* Data = UMSDataSubsystem::Get(this);
 	const FMSGameRulesRow& Rules = Data->GetRules();
 	for (FConstPlayerControllerIterator It = World->GetPlayerControllerIterator(); It; ++It)
 	{
 		if (AMSPlayerState* PS = It->Get() ? It->Get()->GetPlayerState<AMSPlayerState>() : nullptr)
 		{
-			if (PS->GetCash() == 0 && PS->CashEarned == 0)
-			{
-				PS->AddCash(Rules.StartingCash, LOCTEXT("Start", "Starting cash"));
-			}
+			PS->GiveStartingCash(Rules.StartingCash);
 		}
 	}
 	if (AMSGameState* GS = GetGameState<AMSGameState>())
@@ -70,6 +59,74 @@ void AMSGameMode::StartPlay()
 		GS->Wave = 0;
 	}
 	BeginIntermission(Rules.FirstIntermissionTime);
+}
+
+void AMSGameMode::HandleStartingNewPlayer_Implementation(APlayerController* NewPlayer)
+{
+	Super::HandleStartingNewPlayer_Implementation(NewPlayer);
+	// Players who join mid-game (co-op) get the starting cash too.
+	if (AMSPlayerState* PS = NewPlayer ? NewPlayer->GetPlayerState<AMSPlayerState>() : nullptr)
+	{
+		PS->GiveStartingCash(UMSDataSubsystem::Get(this)->GetRules().StartingCash);
+	}
+	if (AMSGameState* GS = GetGameState<AMSGameState>())
+	{
+		GS->PlayersInMatch = GetNumPlayers();
+	}
+}
+
+void AMSGameMode::Logout(AController* Exiting)
+{
+	Super::Logout(Exiting);
+	ReadyPlayers.Remove(Exiting);
+	if (AMSGameState* GS = GetGameState<AMSGameState>())
+	{
+		GS->PlayersInMatch = FMath::Max(1, GetNumPlayers() - 1);
+	}
+}
+
+int32 AMSGameMode::CountActivePlayers() const
+{
+	int32 N = 0;
+	for (FConstPlayerControllerIterator It = GetWorld()->GetPlayerControllerIterator(); It; ++It)
+	{
+		const AMSPlayerCharacter* P = It->Get() ? It->Get()->GetPawn<AMSPlayerCharacter>() : nullptr;
+		N += (P && !P->IsDead()) ? 1 : 0;
+	}
+	return N;
+}
+
+int32 AMSGameMode::CountStandingPlayers(const AMSPlayerCharacter* Ignore) const
+{
+	int32 N = 0;
+	for (FConstPlayerControllerIterator It = GetWorld()->GetPlayerControllerIterator(); It; ++It)
+	{
+		const AMSPlayerCharacter* P = It->Get() ? It->Get()->GetPawn<AMSPlayerCharacter>() : nullptr;
+		N += (P && P != Ignore && !P->IsDead() && !P->IsDowned()) ? 1 : 0;
+	}
+	return N;
+}
+
+TArray<FMSViewer> AMSGameMode::GatherViewers() const
+{
+	TArray<FMSViewer> Viewers;
+	for (FConstPlayerControllerIterator It = GetWorld()->GetPlayerControllerIterator(); It; ++It)
+	{
+		APlayerController* PC = It->Get();
+		const APawn* Pawn = PC ? PC->GetPawn() : nullptr;
+		if (!Pawn)
+		{
+			continue;
+		}
+		FMSViewer V;
+		// Server-side view of each player: eyes + replicated aim. FOV: the camera's if local, else base FOV.
+		V.Location = Pawn->GetPawnViewLocation();
+		V.Rotation = Pawn->GetBaseAimRotation();
+		V.HalfFOV = (PC->IsLocalController() && PC->PlayerCameraManager) ? PC->PlayerCameraManager->GetFOVAngle() * 0.5f
+			: UMSDataSubsystem::Get(this)->GetPlayerFeel().BaseFOV * 0.5f + 5.f;
+		Viewers.Add(V);
+	}
+	return Viewers;
 }
 
 FName AMSGameMode::RowForKind(MSRules::EEnemyKind Kind) const
@@ -130,6 +187,9 @@ void AMSGameMode::BeginIntermission(float Duration)
 	GS->PhaseEndTime = GetWorld()->GetTimeSeconds() + Duration;
 	GS->EnemiesRemaining = 0;
 	GS->bRevealStragglers = false;
+	ReadyPlayers.Reset();
+	GS->PlayersReady = 0;
+	RespawnDeadPlayers();
 }
 
 void AMSGameMode::BeginWave(int32 Wave)
@@ -141,6 +201,18 @@ void AMSGameMode::BeginWave(int32 Wave)
 	}
 	FMSWaveRow Row;
 	CurrentWave = BuildWave(this, Wave, Row);
+	const FMSGameRulesRow& CoopRules = UMSDataSubsystem::Get(this)->GetRules();
+	const int32 Players = FMath::Max(1, GetNumPlayers());
+	for (int32 K = 0; K < MSRules::EnemyKindCount; ++K)
+	{
+		if (K != MSRules::Helicopter)
+		{
+			CurrentWave.Count[K] = MSRules::CoopScale(CurrentWave.Count[K], Players, CoopRules.CoopEnemiesPerExtraPlayer);
+		}
+	}
+	CurrentWave.MaxAlive = MSRules::CoopScale(CurrentWave.MaxAlive, Players, CoopRules.CoopMaxAlivePerExtraPlayer);
+	ReadyPlayers.Reset();
+	GS->PlayersReady = 0;
 	WaveRows[MSRules::Rifleman] = Row.RiflemanRow;
 	WaveRows[MSRules::Rusher] = Row.RusherRow;
 	WaveRows[MSRules::Dog] = Row.DogRow;
@@ -185,6 +257,29 @@ void AMSGameMode::EndWave()
 	BeginIntermission(Rules.IntermissionTime);
 }
 
+void AMSGameMode::SetPlayerReady(AController* Player, bool bReady)
+{
+	AMSGameState* GS = GetGameState<AMSGameState>();
+	if (!GS || !Player || GS->Phase != EMSMatchPhase::Intermission)
+	{
+		return;
+	}
+	if (bReady)
+	{
+		ReadyPlayers.Add(Player);
+	}
+	else
+	{
+		ReadyPlayers.Remove(Player);
+	}
+	ReadyPlayers.Remove(nullptr);
+	GS->PlayersReady = ReadyPlayers.Num();
+	if (ReadyPlayers.Num() >= FMath::Max(1, CountActivePlayers()))
+	{
+		RequestSkipIntermission();
+	}
+}
+
 void AMSGameMode::RequestSkipIntermission()
 {
 	AMSGameState* GS = GetGameState<AMSGameState>();
@@ -210,11 +305,11 @@ void AMSGameMode::RequestSkipIntermission()
 
 // ------------------------------------------------------------------------------------------- spawning
 
-FMSSpawnChoice AMSGameMode::ChooseSpawn(UWorld* World, const FVector& ViewLocation, const FRotator& ViewRotation, float ViewHalfFOV,
+FMSSpawnChoice AMSGameMode::ChooseSpawn(UWorld* World, const TArray<FMSViewer>& Viewers,
 	const TArray<AMSSpawnPoint*>& Points, EMSSpawnKind Kind, int32 Wave, const FMSGameRulesRow& Rules, bool bAllowNavFallback)
 {
 	FMSSpawnChoice Best;
-	if (!World)
+	if (!World || Viewers.Num() == 0)
 	{
 		return Best;
 	}
@@ -222,23 +317,36 @@ FMSSpawnChoice AMSGameMode::ChooseSpawn(UWorld* World, const FVector& ViewLocati
 	P.MinDistance = Rules.SpawnMinDistance;
 	P.MaxDistance = Kind == EMSSpawnKind::Air ? Rules.SpawnMaxDistance * 2.f : Rules.SpawnMaxDistance;
 	P.PreferredDistance = Kind == EMSSpawnKind::Air ? Rules.SpawnMaxDistance : Rules.SpawnPreferredDistance;
-	P.ViewHalfAngleDeg = ViewHalfFOV;
 	P.ViewMarginDeg = Rules.SpawnViewMarginDeg;
 	P.BehindBonus = Rules.SpawnBehindBonus;
 
-	// Horizontal test: flatten everything to the viewer's height.
-	const FVector Fwd = FRotator(0.f, ViewRotation.Yaw, 0.f).Vector();
-	const MSRules::FVec3 Eye(ViewLocation.X, ViewLocation.Y, 0.f);
-	const MSRules::FVec3 Forward(Fwd.X, Fwd.Y, 0.f);
-	const APlayerController* PC = World->GetFirstPlayerController();
-	FCollisionQueryParams TraceParams(SCENE_QUERY_STAT(MSSpawnVisibility), false, PC ? PC->GetPawn() : nullptr);
+	// Ignore every player pawn in the visibility traces.
+	FCollisionQueryParams TraceParams(SCENE_QUERY_STAT(MSSpawnVisibility), false);
+	for (FConstPlayerControllerIterator It = World->GetPlayerControllerIterator(); It; ++It)
+	{
+		if (const APlayerController* PC = It->Get())
+		{
+			TraceParams.AddIgnoredActor(PC->GetPawn());
+		}
+	}
 	const double Now = World->GetTimeSeconds();
 
 	auto Evaluate = [&](const FVector& Location, AMSSpawnPoint* Point)
 	{
+		// Horizontal test: flatten to each viewer's height. Visibility by a real trace per viewer.
 		const FVector Probe = Location + FVector(0.f, 0.f, Kind == EMSSpawnKind::Air ? 0.f : 120.f);
-		const bool bVisible = !World->LineTraceTestByChannel(ViewLocation, Probe, ECC_Visibility, TraceParams);
-		const float Score = MSRules::ScoreSpawnPoint(Eye, Forward, MSRules::FVec3(Location.X, Location.Y, 0.f), bVisible, P);
+		TArray<MSRules::FViewer> RuleViewers;
+		for (const FMSViewer& V : Viewers)
+		{
+			MSRules::FViewer RV;
+			const FVector Fwd = FRotator(0.f, V.Rotation.Yaw, 0.f).Vector();
+			RV.Position = MSRules::FVec3(V.Location.X, V.Location.Y, 0.f);
+			RV.Forward = MSRules::FVec3(Fwd.X, Fwd.Y, 0.f);
+			RV.HalfFovDeg = V.HalfFOV;
+			RV.bSeesPoint = !World->LineTraceTestByChannel(V.Location, Probe, ECC_Visibility, TraceParams);
+			RuleViewers.Add(RV);
+		}
+		const float Score = MSRules::ScoreSpawnPointMulti(RuleViewers.GetData(), RuleViewers.Num(), MSRules::FVec3(Location.X, Location.Y, 0.f), P);
 		if (Score > 0.f)
 		{
 			// Small random jitter so equal points take turns.
@@ -249,7 +357,7 @@ FMSSpawnChoice AMSGameMode::ChooseSpawn(UWorld* World, const FVector& ViewLocati
 				Best.Score = Jittered;
 				Best.Location = Location;
 				Best.Point = Point;
-				Best.Rotation = FRotator(0.f, (ViewLocation - Location).Rotation().Yaw, 0.f);
+				Best.Rotation = FRotator(0.f, (Viewers[0].Location - Location).Rotation().Yaw, 0.f);
 			}
 		}
 	};
@@ -267,13 +375,14 @@ FMSSpawnChoice AMSGameMode::ChooseSpawn(UWorld* World, const FVector& ViewLocati
 		return Best;
 	}
 
+	const FMSViewer& Anchor = Viewers[FMath::RandRange(0, Viewers.Num() - 1)];
 	if (Kind == EMSSpawnKind::Air)
 	{
-		// Behind the player, high up.
+		// Behind a player, high up.
 		for (int32 I = 0; I < 8; ++I)
 		{
-			const float Yaw = ViewRotation.Yaw + 180.f + FMath::FRandRange(-70.f, 70.f);
-			Evaluate(ViewLocation + FRotator(0.f, Yaw, 0.f).Vector() * P.PreferredDistance + FVector(0, 0, 2500.f), nullptr);
+			const float Yaw = Anchor.Rotation.Yaw + 180.f + FMath::FRandRange(-70.f, 70.f);
+			Evaluate(Anchor.Location + FRotator(0.f, Yaw, 0.f).Vector() * P.PreferredDistance + FVector(0, 0, 2500.f), nullptr);
 		}
 		return Best;
 	}
@@ -282,7 +391,7 @@ FMSSpawnChoice AMSGameMode::ChooseSpawn(UWorld* World, const FVector& ViewLocati
 		for (int32 I = 0; I < 24; ++I)
 		{
 			FNavLocation Out;
-			if (Nav->GetRandomReachablePointInRadius(ViewLocation - FVector(0, 0, 150.f), P.MaxDistance, Out))
+			if (Nav->GetRandomReachablePointInRadius(Anchor.Location - FVector(0, 0, 150.f), P.MaxDistance, Out))
 			{
 				Evaluate(Out.Location, nullptr);
 			}
@@ -294,15 +403,11 @@ FMSSpawnChoice AMSGameMode::ChooseSpawn(UWorld* World, const FVector& ViewLocati
 AActor* AMSGameMode::SpawnEnemy(MSRules::EEnemyKind Kind)
 {
 	UWorld* World = GetWorld();
-	APlayerController* PC = World->GetFirstPlayerController();
-	if (!PC)
+	const TArray<FMSViewer> Viewers = GatherViewers();
+	if (Viewers.Num() == 0)
 	{
 		return nullptr;
 	}
-	FVector ViewLoc;
-	FRotator ViewRot;
-	PC->GetPlayerViewPoint(ViewLoc, ViewRot);
-	const float HalfFOV = PC->PlayerCameraManager ? PC->PlayerCameraManager->GetFOVAngle() * 0.5f : 45.f;
 	const UMSDataSubsystem* Data = UMSDataSubsystem::Get(this);
 	const FMSGameRulesRow& Rules = Data->GetRules();
 	const AMSGameState* GS = GetGameState<AMSGameState>();
@@ -313,7 +418,7 @@ AActor* AMSGameMode::SpawnEnemy(MSRules::EEnemyKind Kind)
 	{
 		Points.Add(P);
 	}
-	const FMSSpawnChoice Choice = ChooseSpawn(World, ViewLoc, ViewRot, HalfFOV, Points, SpawnKind, GS ? GS->Wave : 1, Rules, true);
+	const FMSSpawnChoice Choice = ChooseSpawn(World, Viewers, Points, SpawnKind, GS ? GS->Wave : 1, Rules, true);
 	if (!Choice.bValid)
 	{
 		return nullptr;
@@ -444,6 +549,7 @@ void AMSGameMode::Tick(float DeltaSeconds)
 		return;
 	}
 	AliveEnemies.RemoveAll([](const TObjectPtr<AActor>& A) { return !IsValid(A); });
+	GS->PlayersInMatch = FMath::Max(1, GetNumPlayers());
 
 	if (GS->Phase == EMSMatchPhase::Intermission)
 	{
@@ -474,7 +580,40 @@ void AMSGameMode::Tick(float DeltaSeconds)
 
 // ------------------------------------------------------------------------------------------- player
 
+void AMSGameMode::OnPlayerDowned(AMSPlayerCharacter* Player)
+{
+	// MW3 rule: if nobody is left standing, it's over (solo last stand counts as standing: it self-revives).
+	if (!bGameOver && Player && !Player->CanSelfRevive() && MSRules::IsTeamWiped(CountStandingPlayers(Player)))
+	{
+		EndMatch();
+	}
+}
+
 void AMSGameMode::OnPlayerKilled(AMSPlayerCharacter* Player, const FMSDamageInfo& KillingBlow)
+{
+	if (bGameOver)
+	{
+		return;
+	}
+	if (!MSRules::IsTeamWiped(CountStandingPlayers(Player)))
+	{
+		// Co-op: watch a teammate until the next break brings you back.
+		APlayerController* PC = Player ? Cast<APlayerController>(Player->GetController()) : nullptr;
+		for (FConstPlayerControllerIterator It = GetWorld()->GetPlayerControllerIterator(); It; ++It)
+		{
+			AMSPlayerCharacter* Mate = It->Get() ? It->Get()->GetPawn<AMSPlayerCharacter>() : nullptr;
+			if (PC && Mate && Mate != Player && !Mate->IsDead())
+			{
+				PC->SetViewTargetWithBlend(Mate, 1.5f);
+				break;
+			}
+		}
+		return;
+	}
+	EndMatch();
+}
+
+void AMSGameMode::EndMatch()
 {
 	if (bGameOver)
 	{
@@ -482,35 +621,62 @@ void AMSGameMode::OnPlayerKilled(AMSPlayerCharacter* Player, const FMSDamageInfo
 	}
 	bGameOver = true;
 	AMSGameState* GS = GetGameState<AMSGameState>();
-	AMSPlayerController* PC = Player ? Cast<AMSPlayerController>(Player->GetController()) : nullptr;
-	const AMSPlayerState* PS = PC ? PC->GetPlayerState<AMSPlayerState>() : nullptr;
-	FMSGameOverStats Stats;
-	Stats.WaveReached = GS ? GS->Wave : 0;
-	Stats.Kills = PS ? PS->Kills : 0;
-	Stats.Headshots = PS ? PS->Headshots : 0;
-	Stats.CashEarned = PS ? PS->CashEarned : 0;
-	Stats.TimeSurvived = GS ? static_cast<float>(GetWorld()->GetTimeSeconds() - GS->MatchStartTime) : 0.f;
-	if (UMSGameInstance* GI = GetGameInstance<UMSGameInstance>())
-	{
-		const FString Map = UGameplayStatics::GetCurrentLevelName(this, true);
-		Stats.bNewBest = GI->SubmitWave(Map, Stats.WaveReached);
-		Stats.BestWave = GI->GetBestWave(Map);
-	}
 	if (GS)
 	{
 		GS->Phase = EMSMatchPhase::GameOver;
-		GS->FinalStats = Stats;
 	}
 	const float Delay = UMSDataSubsystem::Get(this)->GetRules().GameOverDelay;
-	TWeakObjectPtr<AMSPlayerController> WeakPC(PC);
-	FTimerHandle Handle;
-	GetWorldTimerManager().SetTimer(Handle, FTimerDelegate::CreateLambda([WeakPC, Stats]()
+	for (FConstPlayerControllerIterator It = GetWorld()->GetPlayerControllerIterator(); It; ++It)
 	{
-		if (WeakPC.IsValid())
+		AMSPlayerController* PC = Cast<AMSPlayerController>(It->Get());
+		const AMSPlayerState* PS = PC ? PC->GetPlayerState<AMSPlayerState>() : nullptr;
+		if (!PC)
 		{
-			WeakPC->ShowGameOver(Stats);
+			continue;
 		}
-	}), FMath::Max(0.1f, Delay), false);
+		FMSGameOverStats Stats;
+		Stats.WaveReached = GS ? GS->Wave : 0;
+		Stats.Kills = PS ? PS->Kills : 0;
+		Stats.Headshots = PS ? PS->Headshots : 0;
+		Stats.CashEarned = PS ? PS->CashEarned : 0;
+		Stats.TimeSurvived = GS ? static_cast<float>(GetWorld()->GetTimeSeconds() - GS->MatchStartTime) : 0.f;
+		if (GS)
+		{
+			GS->FinalStats = Stats;
+		}
+		TWeakObjectPtr<AMSPlayerController> WeakPC(PC);
+		FTimerHandle Handle;
+		GetWorldTimerManager().SetTimer(Handle, FTimerDelegate::CreateLambda([WeakPC, Stats]()
+		{
+			if (WeakPC.IsValid())
+			{
+				WeakPC->ClientGameOver(Stats);   // each machine saves its own best wave
+			}
+		}), FMath::Max(0.1f, Delay), false);
+	}
+}
+
+void AMSGameMode::RespawnDeadPlayers()
+{
+	if (!UMSDataSubsystem::Get(this)->GetRules().bRespawnDeadAtIntermission)
+	{
+		return;
+	}
+	for (FConstPlayerControllerIterator It = GetWorld()->GetPlayerControllerIterator(); It; ++It)
+	{
+		APlayerController* PC = It->Get();
+		AMSPlayerCharacter* Old = PC ? PC->GetPawn<AMSPlayerCharacter>() : nullptr;
+		if (!PC || (Old && !Old->IsDead()))
+		{
+			continue;
+		}
+		if (Old)
+		{
+			PC->UnPossess();
+			Old->SetLifeSpan(5.f);
+		}
+		RestartPlayer(PC);   // fresh pawn at a PlayerStart with the starting loadout; cash is kept
+	}
 }
 
 int32 AMSGameMode::SpawnSquad(AMSPlayerCharacter* Caller, FName EquipmentRow)

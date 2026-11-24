@@ -7,9 +7,11 @@
 #include "Player/MSPlayerCharacter.h"
 #include "Player/MSPlayerController.h"
 #include "Player/MSPlayerState.h"
+#include "Weapons/MSWeapon.h"
 #include "Blueprint/WidgetTree.h"
 #include "Components/Border.h"
 #include "Components/Button.h"
+#include "Components/EditableTextBox.h"
 #include "Components/TextBlock.h"
 #include "Components/VerticalBox.h"
 #include "Components/VerticalBoxSlot.h"
@@ -106,8 +108,37 @@ void UMSMainMenuWidget::Build()
 				UGameplayStatics::OpenLevel(Weak.Get(), FName(*MapPath));
 			}
 		});
+		AddButton(FText::Format(LOCTEXT("Host", "HOST CO-OP  {0}"), Map.DisplayName), [Weak, MapPath]()
+		{
+			if (AMSPlayerController* PC = Weak.IsValid() ? Cast<AMSPlayerController>(Weak->GetOwningPlayer()) : nullptr)
+			{
+				PC->HostGame(MapPath);
+			}
+		});
 	}
 	TWeakObjectPtr<UMSMainMenuWidget> Weak(this);
+
+	// Join a friend's co-op game by IP (LAN / VPN / port 7777 forwarded).
+	AddText(LOCTEXT("JoinHint", "Join a co-op game: host's IP address"), 14, FLinearColor(0.7f, 0.72f, 0.66f));
+	AddressBox = WidgetTree->ConstructWidget<UEditableTextBox>(UEditableTextBox::StaticClass());
+	AddressBox->SetHintText(LOCTEXT("IPHint", "e.g. 192.168.1.20"));
+	AddressBox->SetText(FText::FromString(TEXT("127.0.0.1")));
+	if (UVerticalBoxSlot* Slot = Column->AddChildToVerticalBox(AddressBox))
+	{
+		Slot->SetPadding(FMargin(0.f, 4.f));
+		Slot->SetHorizontalAlignment(HAlign_Fill);
+	}
+	AddButton(LOCTEXT("Join", "JOIN CO-OP"), [Weak]()
+	{
+		if (!Weak.IsValid())
+		{
+			return;
+		}
+		if (AMSPlayerController* PC = Cast<AMSPlayerController>(Weak->GetOwningPlayer()))
+		{
+			PC->JoinGame(Weak->AddressBox ? Weak->AddressBox->GetText().ToString() : FString());
+		}
+	});
 	AddButton(LOCTEXT("Quit", "QUIT"), [Weak]()
 	{
 		if (Weak.IsValid())
@@ -131,7 +162,11 @@ void UMSPauseMenuWidget::Build()
 	TWeakObjectPtr<UMSPauseMenuWidget> Weak(this);
 	auto PC = [Weak]() { return Weak.IsValid() ? Cast<AMSPlayerController>(Weak->GetOwningPlayer()) : nullptr; };
 	AddButton(LOCTEXT("Resume", "RESUME"), [PC]() { if (AMSPlayerController* C = PC()) { C->TogglePause(); } });
-	AddButton(LOCTEXT("Restart", "RESTART"), [PC]() { if (AMSPlayerController* C = PC()) { C->RestartMatch(); } });
+	const AMSPlayerController* Owner = Cast<AMSPlayerController>(GetOwningPlayer());
+	if (!Owner || Owner->CanRestart())
+	{
+		AddButton(LOCTEXT("Restart", "RESTART"), [PC]() { if (AMSPlayerController* C = PC()) { C->RestartMatch(); } });
+	}
 	AddButton(LOCTEXT("Menu", "MAIN MENU"), [PC]() { if (AMSPlayerController* C = PC()) { C->ReturnToMainMenu(); } });
 	AddButton(LOCTEXT("QuitGame", "QUIT GAME"), [Weak]()
 	{
@@ -170,7 +205,15 @@ void UMSGameOverWidget::Build()
 	AddText(FText::GetEmpty(), 10);
 	TWeakObjectPtr<UMSGameOverWidget> Weak(this);
 	auto PC = [Weak]() { return Weak.IsValid() ? Cast<AMSPlayerController>(Weak->GetOwningPlayer()) : nullptr; };
-	AddButton(LOCTEXT("Again", "PLAY AGAIN"), [PC]() { if (AMSPlayerController* C = PC()) { C->RestartMatch(); } });
+	const AMSPlayerController* Owner = Cast<AMSPlayerController>(GetOwningPlayer());
+	if (!Owner || Owner->CanRestart())
+	{
+		AddButton(LOCTEXT("Again", "PLAY AGAIN"), [PC]() { if (AMSPlayerController* C = PC()) { C->RestartMatch(); } });
+	}
+	else
+	{
+		AddText(LOCTEXT("WaitHost", "Waiting for the host to restart..."), 16, FLinearColor(0.7f, 0.72f, 0.66f));
+	}
 	AddButton(LOCTEXT("ToMenu", "MAIN MENU"), [PC]() { if (AMSPlayerController* C = PC()) { C->ReturnToMainMenu(); } });
 }
 
@@ -183,8 +226,52 @@ void UMSShopWidget::SetCategory(EMSShopCategory InCategory)
 	Refresh();
 }
 
+void UMSShopWidget::ShowResult(const FText& Message)
+{
+	LastMessage = Message;
+	Refresh();
+}
+
+FString UMSShopWidget::StateSignature() const
+{
+	// Everything the list shows: rebuild only when one of these changes (rebuilding mid-click eats the click).
+	const APlayerController* Owner = GetOwningPlayer();
+	const AMSPlayerCharacter* Player = Owner ? Owner->GetPawn<AMSPlayerCharacter>() : nullptr;
+	const AMSPlayerState* PS = Owner ? Owner->GetPlayerState<AMSPlayerState>() : nullptr;
+	const AMSGameState* GS = GetWorld() ? GetWorld()->GetGameState<AMSGameState>() : nullptr;
+	FString Sig = FString::Printf(TEXT("%d|%d|"), PS ? PS->GetCash() : -1, GS ? GS->Wave : 0);
+	if (Player)
+	{
+		for (int32 I = 0; I < static_cast<int32>(EMSEquipmentSlot::Count); ++I)
+		{
+			Sig += FString::Printf(TEXT("%d,"), Player->GetEquipmentCount(static_cast<EMSEquipmentSlot>(I)));
+		}
+		for (const AMSWeapon* W : Player->GetWeapons())
+		{
+			Sig += W ? FString::Printf(TEXT("%s:%d,"), *W->GetRowName().ToString(), W->GetReserveAmmo()) : FString(TEXT("-,"));
+		}
+	}
+	return Sig;
+}
+
+void UMSShopWidget::NativeTick(const FGeometry& MyGeometry, float InDeltaTime)
+{
+	Super::NativeTick(MyGeometry, InDeltaTime);
+	RefreshTimer -= InDeltaTime;
+	if (RefreshTimer <= 0.f)
+	{
+		RefreshTimer = 0.25f;
+		const FString Sig = StateSignature();
+		if (Sig != LastSignature)
+		{
+			Refresh();
+		}
+	}
+}
+
 void UMSShopWidget::Refresh()
 {
+	LastSignature = StateSignature();
 	ClearColumn();
 	Build();
 }
@@ -229,15 +316,11 @@ void UMSShopWidget::Build()
 			{
 				return;
 			}
-			APlayerController* PC = Weak->GetOwningPlayer();
-			AMSPlayerCharacter* P = PC ? PC->GetPawn<AMSPlayerCharacter>() : nullptr;
-			if (P)
+			// The server decides; the result comes back through ShowResult().
+			if (AMSPlayerController* PC = Cast<AMSPlayerController>(Weak->GetOwningPlayer()))
 			{
-				FText Message;
-				AMSBuyStation::TryPurchase(P, RowName, Message);
-				Weak->LastMessage = Message;
+				PC->RequestPurchase(RowName);
 			}
-			Weak->Refresh();
 		});
 		Button->SetIsEnabled(State == EMSPurchaseResult::Purchased);
 		Button->SetToolTipText(Item->Description);

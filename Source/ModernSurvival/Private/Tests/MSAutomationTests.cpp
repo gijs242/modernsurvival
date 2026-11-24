@@ -289,18 +289,34 @@ bool FMSSpawnVisibilityTest::RunTest(const FString& Parameters)
 	AMSSpawnPoint* InView = MakePoint(FVector(2000.f, 0.f, 0.f));       // dead ahead, visible
 	AMSSpawnPoint* Occluded = MakePoint(FVector(2000.f, 3000.f, 0.f));  // ahead-right behind the wall
 	AMSSpawnPoint* Behind = MakePoint(FVector(-2000.f, 0.f, 0.f));      // behind the viewer
-	const FVector Eye(0.f, 0.f, 160.f);
-	const FRotator View(0.f, 0.f, 0.f);
+	FMSViewer Solo;
+	Solo.Location = FVector(0.f, 0.f, 160.f);
+	Solo.Rotation = FRotator::ZeroRotator;
+	Solo.HalfFOV = 45.f;
+	const TArray<FMSViewer> One = {Solo};
 
-	FMSSpawnChoice C = AMSGameMode::ChooseSpawn(World, Eye, View, 45.f, {InView, Occluded, Behind}, EMSSpawnKind::Ground, 1, Rules, false);
+	FMSSpawnChoice C = AMSGameMode::ChooseSpawn(World, One, {InView, Occluded, Behind}, EMSSpawnKind::Ground, 1, Rules, false);
 	TestTrue(TEXT("found a spawn"), C.bValid);
 	TestTrue(TEXT("prefers behind the player"), C.Point.Get() == Behind);
 
-	C = AMSGameMode::ChooseSpawn(World, Eye, View, 45.f, {InView, Occluded}, EMSSpawnKind::Ground, 1, Rules, false);
+	C = AMSGameMode::ChooseSpawn(World, One, {InView, Occluded}, EMSSpawnKind::Ground, 1, Rules, false);
 	TestTrue(TEXT("never the visible point"), C.Point.Get() != InView);
 
-	C = AMSGameMode::ChooseSpawn(World, Eye, View, 45.f, {InView}, EMSSpawnKind::Ground, 1, Rules, false);
+	C = AMSGameMode::ChooseSpawn(World, One, {InView}, EMSSpawnKind::Ground, 1, Rules, false);
 	TestFalse(TEXT("visible-only points are rejected"), C.bValid);
+
+	// Co-op: a second player far behind, looking forward, can see the "behind" point: not allowed any more.
+	FMSViewer Mate;
+	Mate.Location = FVector(-4500.f, 0.f, 160.f);
+	Mate.Rotation = FRotator::ZeroRotator;
+	Mate.HalfFOV = 45.f;
+	C = AMSGameMode::ChooseSpawn(World, {Solo, Mate}, {InView, Behind}, EMSSpawnKind::Ground, 1, Rules, false);
+	TestFalse(TEXT("co-op: hidden from every player or not at all"), C.bValid);
+	// Same spot, but the teammate looks the other way: the point behind both players is fine again.
+	FMSViewer MateBack = Mate;
+	MateBack.Rotation = FRotator(0.f, 180.f, 0.f);
+	C = AMSGameMode::ChooseSpawn(World, {Solo, MateBack}, {InView, Behind}, EMSSpawnKind::Ground, 1, Rules, false);
+	TestTrue(TEXT("co-op: behind both players is allowed"), C.bValid && C.Point.Get() == Behind);
 	return true;
 }
 

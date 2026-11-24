@@ -11,6 +11,14 @@ class AMSPlayerCharacter;
 class UMSHealthComponent;
 class AMSSpawnPoint;
 
+/** A player's point of view for spawn checks. */
+struct FMSViewer
+{
+	FVector Location = FVector::ZeroVector;
+	FRotator Rotation = FRotator::ZeroRotator;
+	float HalfFOV = 45.f;
+};
+
 /** Result of picking a spawn location (exposed for tests). */
 struct FMSSpawnChoice
 {
@@ -25,6 +33,10 @@ struct FMSSpawnChoice
  * Wave survival rules: 30 s skippable break, then a wave built from DT_Waves (extrapolated past
  * the last row), enemies trickled in at out-of-view spawn points up to MaxAlive, cash per kill,
  * wave clear bonus, game over when the player dies (after their last stand).
+ *
+ * Co-op (listen server, up to GameSession MaxPlayers): waves scale with players, spawns must be
+ * hidden from every player, downed players are revived by teammates, the dead respawn at the next
+ * break, and the game ends when nobody is left standing.
  */
 UCLASS()
 class MODERNSURVIVAL_API AMSGameMode : public AGameModeBase
@@ -36,8 +48,13 @@ public:
 
 	virtual void StartPlay() override;
 	virtual void Tick(float DeltaSeconds) override;
+	virtual void HandleStartingNewPlayer_Implementation(APlayerController* NewPlayer) override;
+	virtual void Logout(AController* Exiting) override;
 
 	void RequestSkipIntermission();
+	/** Co-op ready-up: the break is skipped once every living player is ready. */
+	void SetPlayerReady(AController* Player, bool bReady);
+	void OnPlayerDowned(AMSPlayerCharacter* Player);
 	void OnPlayerKilled(AMSPlayerCharacter* Player, const FMSDamageInfo& KillingBlow);
 	/** Spawns the AI squad near the player. Returns how many spawned. */
 	int32 SpawnSquad(AMSPlayerCharacter* Caller, FName EquipmentRow);
@@ -52,8 +69,12 @@ public:
 	 * Picks the best spawn: outside the viewer's view cone (or occluded), within the distance band,
 	 * off cooldown. Falls back to random navmesh points around the viewer if no spawn point works.
 	 */
-	static FMSSpawnChoice ChooseSpawn(UWorld* World, const FVector& ViewLocation, const FRotator& ViewRotation, float ViewHalfFOV,
+	static FMSSpawnChoice ChooseSpawn(UWorld* World, const TArray<FMSViewer>& Viewers,
 		const TArray<AMSSpawnPoint*>& Points, EMSSpawnKind Kind, int32 Wave, const struct FMSGameRulesRow& Rules, bool bAllowNavFallback);
+
+	/** Players currently on their feet (alive and not downed). */
+	int32 CountStandingPlayers(const AMSPlayerCharacter* Ignore = nullptr) const;
+	int32 CountActivePlayers() const;
 
 protected:
 	void BeginIntermission(float Duration);
@@ -64,6 +85,9 @@ protected:
 	void UpdateStragglers();
 	void TrackCorpse(AActor* Corpse);
 	FName RowForKind(MSRules::EEnemyKind Kind) const;
+	void EndMatch();
+	void RespawnDeadPlayers();
+	TArray<FMSViewer> GatherViewers() const;
 
 	UFUNCTION() void HandleEnemyDied(UMSHealthComponent* Health, const FMSDamageInfo& KillingBlow);
 
@@ -83,4 +107,5 @@ protected:
 	float WaveHealthMul = 1.f;
 	float WaveDamageMul = 1.f;
 	float WaveAccuracyMul = 1.f;
+	TSet<TWeakObjectPtr<AController>> ReadyPlayers;
 };

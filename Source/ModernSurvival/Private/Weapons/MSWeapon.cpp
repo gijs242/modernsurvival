@@ -14,6 +14,7 @@
 #include "Engine/World.h"
 #include "GameFramework/Controller.h"
 #include "GameFramework/Pawn.h"
+#include "Net/UnrealNetwork.h"
 
 AMSWeapon::AMSWeapon()
 {
@@ -24,11 +25,50 @@ AMSWeapon::AMSWeapon()
 	Visual->SetupAttachment(GetRootComponent());
 	VisualClass = UMSWeaponVisualComponent::StaticClass();
 	SetActorEnableCollision(false);
+	bReplicates = true;
+}
+
+void AMSWeapon::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
+{
+	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
+	DOREPLIFETIME(AMSWeapon, Holder);
+	DOREPLIFETIME(AMSWeapon, RowName);
+	DOREPLIFETIME(AMSWeapon, bEquipped);
+	// The owner simulates its own ammo (prediction); everyone else gets the server's numbers.
+	DOREPLIFETIME_CONDITION(AMSWeapon, AmmoInMag, COND_SkipOwner);
+	DOREPLIFETIME_CONDITION(AMSWeapon, AmmoReserve, COND_SkipOwner);
 }
 
 IMSWeaponHolder* AMSWeapon::GetHolder() const
 {
 	return Holder ? Cast<IMSWeaponHolder>(Holder) : nullptr;
+}
+
+bool AMSWeapon::IsHolderLocallyControlled() const
+{
+	const APawn* Pawn = Cast<APawn>(Holder);
+	return Pawn && Pawn->IsLocallyControlled();
+}
+
+void AMSWeapon::LoadRowAndVisual()
+{
+	const UMSDataSubsystem* Data = UMSDataSubsystem::Get(this);
+	const FMSWeaponRow* Found = Data ? Data->FindWeapon(RowName) : nullptr;
+	Row = Found ? *Found : FMSWeaponRow();
+	bRowLoaded = true;
+	if (!Found)
+	{
+		UE_LOG(LogMS, Warning, TEXT("Weapon row %s not found; using defaults."), *RowName.ToString());
+	}
+	if (VisualClass && Visual && Visual->GetClass() != VisualClass)
+	{
+		Visual->DestroyComponent();
+		Visual = NewObject<UMSWeaponVisualComponent>(this, VisualClass, TEXT("VisualOverride"));
+		Visual->SetupAttachment(GetRootComponent());
+		Visual->RegisterComponent();
+	}
+	Visual->BuildVisual(Row, bFirstPerson);
+	bVisualBuilt = true;
 }
 
 void AMSWeapon::Setup(FName InRowName, AActor* InHolder, bool bInFirstPerson)
@@ -41,35 +81,63 @@ void AMSWeapon::Setup(FName InRowName, AActor* InHolder, bool bInFirstPerson)
 	{
 		SetInstigator(Pawn);
 	}
-
-	const UMSDataSubsystem* Data = UMSDataSubsystem::Get(this);
-	const FMSWeaponRow* Found = Data ? Data->FindWeapon(RowName) : nullptr;
-	Row = Found ? *Found : FMSWeaponRow();
-	if (!Found)
-	{
-		UE_LOG(LogMS, Warning, TEXT("Weapon row %s not found; using defaults."), *RowName.ToString());
-	}
-
-	if (VisualClass && Visual && Visual->GetClass() != VisualClass)
-	{
-		Visual->DestroyComponent();
-		Visual = NewObject<UMSWeaponVisualComponent>(this, VisualClass, TEXT("VisualOverride"));
-		Visual->SetupAttachment(GetRootComponent());
-		Visual->RegisterComponent();
-	}
-	Visual->BuildVisual(Row, bFirstPerson);
+	// AI/turret guns are rotated by the server every tick: replicate that.
+	SetReplicateMovement(!Cast<APawn>(InHolder) || !Cast<APawn>(InHolder)->IsPlayerControlled());
+	LoadRowAndVisual();
 	FillAmmo();
+}
+
+void AMSWeapon::OnRep_Setup()
+{
+	if (RowName.IsNone() || !Holder)
+	{
+		return;
+	}
+	bFirstPerson = IsHolderLocallyControlled();
+	LoadRowAndVisual();
+	if (bFirstPerson)
+	{
+		// The owner's ammo isn't replicated (it predicts): start from a full gun like the server.
+		AmmoInMag = Row.MagazineSize;
+		AmmoReserve = Row.MaxReserveAmmo;
+	}
+	OnRep_Equipped();
+}
+
+void AMSWeapon::SetFirstPerson(bool bInFirstPerson)
+{
+	if (bInFirstPerson != bFirstPerson && bRowLoaded)
+	{
+		bFirstPerson = bInFirstPerson;
+		Visual->BuildVisual(Row, bFirstPerson);
+	}
+}
+
+void AMSWeapon::PushAmmoToOwner()
+{
+	if (HasAuthority() && !IsHolderLocallyControlled() && Cast<APawn>(Holder) && Cast<APawn>(Holder)->IsPlayerControlled())
+	{
+		ClientSetAmmo(AmmoInMag, AmmoReserve);
+	}
+}
+
+void AMSWeapon::ClientSetAmmo_Implementation(int32 InMag, int32 InReserve)
+{
+	AmmoInMag = InMag;
+	AmmoReserve = InReserve;
 }
 
 void AMSWeapon::FillAmmo()
 {
 	AmmoInMag = Row.MagazineSize;
 	AmmoReserve = Row.MaxReserveAmmo;
+	PushAmmoToOwner();
 }
 
 void AMSWeapon::AddReserveAmmo(int32 Amount)
 {
 	AmmoReserve = FMath::Clamp(AmmoReserve + Amount, 0, Row.MaxReserveAmmo);
+	PushAmmoToOwner();
 }
 
 void AMSWeapon::BlockFiring(float Seconds)
@@ -79,9 +147,18 @@ void AMSWeapon::BlockFiring(float Seconds)
 
 void AMSWeapon::SetEquipped(bool bInEquipped)
 {
+	const bool bChanged = bEquipped != bInEquipped;
 	bEquipped = bInEquipped;
-	SetActorHiddenInGame(!bInEquipped);
-	if (bInEquipped)
+	if (bChanged || !bInEquipped)
+	{
+		OnRep_Equipped();
+	}
+}
+
+void AMSWeapon::OnRep_Equipped()
+{
+	SetActorHiddenInGame(!bEquipped);
+	if (bEquipped)
 	{
 		EquipTimeLeft = Row.EquipTime;
 	}
@@ -127,19 +204,31 @@ bool AMSWeapon::StartReload()
 	ReloadElapsed = 0.f;
 	ReloadDuration = Row.bReloadPerShell ? Row.ReloadPerShellTime : (AmmoInMag == 0 ? Row.ReloadEmptyTime : Row.ReloadTime);
 	OnReloadStarted.Broadcast();
-	if (UMSAudioSubsystem* Audio = GetWorld()->GetSubsystem<UMSAudioSubsystem>())
+	if (!HasAuthority())
 	{
-		USoundBase* Sound = Row.ReloadSound.LoadSynchronous();
-		if (H && H->IsLocalPlayerHolder())
+		ServerReload();
+	}
+	if (GetNetMode() != NM_DedicatedServer)
+	{
+		if (UMSAudioSubsystem* Audio = GetWorld()->GetSubsystem<UMSAudioSubsystem>())
 		{
-			Audio->Play2D(Sound, 0.7f);
-		}
-		else
-		{
-			Audio->PlayAt(GetActorLocation(), Sound, 0.8f);
+			USoundBase* Sound = Row.ReloadSound.LoadSynchronous();
+			if (H && H->IsLocalPlayerHolder())
+			{
+				Audio->Play2D(Sound, 0.7f);
+			}
+			else
+			{
+				Audio->PlayAt(GetActorLocation(), Sound, 0.8f);
+			}
 		}
 	}
 	return true;
+}
+
+void AMSWeapon::ServerReload_Implementation()
+{
+	StartReload();
 }
 
 void AMSWeapon::CancelReload()
@@ -229,6 +318,7 @@ void AMSWeapon::Tick(float DeltaSeconds)
 		return;
 	}
 
+	// The trigger is only ever held on the machine that controls this gun (see class comment).
 	if (!bTriggerHeld || !bEquipped)
 	{
 		return;
@@ -269,6 +359,22 @@ void AMSWeapon::Tick(float DeltaSeconds)
 	}
 }
 
+static FVector RandomInCone(const FVector& Dir, float HalfAngleDeg)
+{
+	if (HalfAngleDeg <= 0.f)
+	{
+		return Dir;
+	}
+	// Most shots near the centre, which feels better than uniform.
+	const float R = FMath::Sqrt(FMath::FRand()) * FMath::FRandRange(0.5f, 1.f);
+	const float Angle = FMath::DegreesToRadians(HalfAngleDeg) * R;
+	const float Theta = FMath::FRandRange(0.f, 2.f * PI);
+	const FVector Up = FMath::Abs(Dir.Z) < 0.99f ? FVector::UpVector : FVector::RightVector;
+	const FVector Right = FVector::CrossProduct(Dir, Up).GetSafeNormal();
+	const FVector Up2 = FVector::CrossProduct(Right, Dir);
+	return (Dir * FMath::Cos(Angle) + (Right * FMath::Cos(Theta) + Up2 * FMath::Sin(Theta)) * FMath::Sin(Angle)).GetSafeNormal();
+}
+
 void AMSWeapon::FireShot()
 {
 	IMSWeaponHolder* H = GetHolder();
@@ -288,28 +394,58 @@ void AMSWeapon::FireShot()
 	LastFireTime = World->GetTimeSeconds();
 	++TotalShots;
 
-	if (Row.bProjectile)
+	// Shot directions are decided here (spread, pellets) and sent as-is to the server.
+	TArray<FVector> Directions;
+	const FVector ShotDir = RandomInCone(Dir, Spread);
+	const int32 Pellets = Row.bProjectile ? 1 : FMath::Max(1, Row.PelletCount);
+	for (int32 P = 0; P < Pellets; ++P)
 	{
-		FireProjectile(Start, Dir, Spread);
+		Directions.Add(Pellets > 1 ? RandomInCone(ShotDir, Row.PelletSpread) : ShotDir);
+	}
+
+	TArray<FVector> Ends;
+	bool bFlesh = false;
+	if (HasAuthority())
+	{
+		if (Row.bProjectile)
+		{
+			SpawnProjectile(Start, Directions[0]);
+		}
+		else
+		{
+			const FMSHitReport Report = TraceShots(Start, Directions, true, true, Ends, bFlesh);
+			if (Report.bHitDamageable)
+			{
+				H->OnWeaponHit(Report);
+			}
+		}
+		UAISense_Hearing::ReportNoiseEvent(World, GetMuzzleTransform().GetLocation(), 1.f, GetInstigator() ? Cast<AActor>(GetInstigator()) : Holder.Get(), 6000.f, TEXT("Gunshot"));
+		if (GetNetMode() != NM_Standalone)
+		{
+			TArray<FVector_NetQuantize> NetEnds;
+			for (const FVector& E : Ends)
+			{
+				NetEnds.Add(E);
+			}
+			MulticastFireFX(GetMuzzleTransform().GetLocation(), NetEnds, bFlesh);
+		}
 	}
 	else
 	{
-		FireHitscan(Start, Dir, Spread);
+		// Client prediction: show impacts now, let the server decide damage.
+		if (!Row.bProjectile)
+		{
+			TraceShots(Start, Directions, false, true, Ends, bFlesh);
+		}
+		TArray<FVector_NetQuantizeNormal> NetDirs;
+		for (const FVector& D : Directions)
+		{
+			NetDirs.Add(D);
+		}
+		ServerFire(Start, NetDirs);
 	}
 
-	const FTransform Muzzle = GetMuzzleTransform();
-	UMSFXLibrary::SpawnMuzzleFlash(World, Muzzle, Row.MuzzleFlashFX.LoadSynchronous(), Row.MuzzleLightIntensity, bFirstPerson ? Visual.Get() : nullptr);
-	if (Visual)
-	{
-		Visual->PlayFireAnim();
-	}
-	if (UMSAudioSubsystem* Audio = World->GetSubsystem<UMSAudioSubsystem>())
-	{
-		Audio->PlayGunshot(Muzzle.GetLocation(), Row, H->IsLocalPlayerHolder());
-	}
-	// AI hearing: gunfire is loud.
-	UAISense_Hearing::ReportNoiseEvent(World, Muzzle.GetLocation(), 1.f, GetInstigator() ? Cast<AActor>(GetInstigator()) : Holder.Get(), 6000.f, TEXT("Gunshot"));
-
+	PlayLocalFireCosmetics(Ends, H->IsLocalPlayerHolder());
 	Bloom = FMath::Min(Row.MaxSpread, Bloom + Row.SpreadPerShot);
 	H->OnWeaponFired(Row, ShotIndex);
 	++ShotIndex;
@@ -321,30 +457,33 @@ void AMSWeapon::FireShot()
 	}
 }
 
-static FVector RandomInCone(const FVector& Dir, float HalfAngleDeg)
+void AMSWeapon::PlayLocalFireCosmetics(const TArray<FVector>& Ends, bool bLocalHolder)
 {
-	if (HalfAngleDeg <= 0.f)
+	UWorld* World = GetWorld();
+	if (!World || GetNetMode() == NM_DedicatedServer)
 	{
-		return Dir;
+		return;
 	}
-	// Gaussian-ish: most shots near the centre, which feels better than uniform.
-	const float R = FMath::Sqrt(FMath::FRand()) * FMath::FRandRange(0.5f, 1.f);
-	const float Angle = FMath::DegreesToRadians(HalfAngleDeg) * R;
-	const float Theta = FMath::FRandRange(0.f, 2.f * PI);
-	const FVector Up = FMath::Abs(Dir.Z) < 0.99f ? FVector::UpVector : FVector::RightVector;
-	const FVector Right = FVector::CrossProduct(Dir, Up).GetSafeNormal();
-	const FVector Up2 = FVector::CrossProduct(Right, Dir);
-	return (Dir * FMath::Cos(Angle) + (Right * FMath::Cos(Theta) + Up2 * FMath::Sin(Theta)) * FMath::Sin(Angle)).GetSafeNormal();
+	const FTransform Muzzle = GetMuzzleTransform();
+	UMSFXLibrary::SpawnMuzzleFlash(World, Muzzle, Row.MuzzleFlashFX.LoadSynchronous(), Row.MuzzleLightIntensity, bFirstPerson ? Visual.Get() : nullptr);
+	if (Visual)
+	{
+		Visual->PlayFireAnim();
+	}
+	if (Ends.Num() > 0 && Row.TracerEveryNth > 0 && TotalShots % Row.TracerEveryNth == 0)
+	{
+		UMSFXLibrary::SpawnTracer(World, Muzzle.GetLocation(), Ends[0], Row.TracerFX.LoadSynchronous());
+	}
+	if (UMSAudioSubsystem* Audio = World->GetSubsystem<UMSAudioSubsystem>())
+	{
+		Audio->PlayGunshot(Muzzle.GetLocation(), Row, bLocalHolder);
+	}
 }
 
-void AMSWeapon::FireHitscan(const FVector& Start, const FVector& Direction, float Spread)
+FMSHitReport AMSWeapon::TraceShots(const FVector& Start, const TArray<FVector>& Directions, bool bApplyDamage, bool bPlayImpacts, TArray<FVector>& OutEnds, bool& bOutFlesh)
 {
 	UWorld* World = GetWorld();
 	IMSWeaponHolder* H = GetHolder();
-	const int32 Pellets = FMath::Max(1, Row.PelletCount);
-	const FVector ShotDir = RandomInCone(Direction, Spread);
-	const FVector MuzzleLoc = GetMuzzleTransform().GetLocation();
-
 	FCollisionQueryParams Params(SCENE_QUERY_STAT(MSWeaponTrace), false, this);
 	Params.AddIgnoredActor(Holder);
 	Params.bReturnPhysicalMaterial = true;
@@ -356,24 +495,28 @@ void AMSWeapon::FireHitscan(const FVector& Start, const FVector& Direction, floa
 	Params.AddIgnoredActors(HolderChildren);
 
 	FMSHitReport Combined;
-	for (int32 P = 0; P < Pellets; ++P)
+	bOutFlesh = false;
+	for (const FVector& RawDir : Directions)
 	{
-		const FVector PelletDir = Pellets > 1 ? RandomInCone(ShotDir, Row.PelletSpread) : ShotDir;
+		const FVector PelletDir = RawDir.GetSafeNormal();
 		const FVector End = Start + PelletDir * Row.Range;
 		FHitResult Hit;
 		const bool bHit = World->LineTraceSingleByChannel(Hit, Start, End, ECC_MSWeapon, Params);
-		const FVector ImpactPoint = bHit ? Hit.ImpactPoint : End;
-
-		if (P == 0 && Row.TracerEveryNth > 0 && TotalShots % Row.TracerEveryNth == 0)
-		{
-			UMSFXLibrary::SpawnTracer(World, MuzzleLoc, ImpactPoint, Row.TracerFX.LoadSynchronous());
-		}
+		OutEnds.Add(bHit ? FVector(Hit.ImpactPoint) : End);
 		if (!bHit)
 		{
 			continue;
 		}
-
-		AActor* HitActor = Hit.GetActor();
+		const bool bDamageable = UMSCombatLibrary::GetTeam(Hit.GetActor()) != EMSTeam::Neutral;
+		bOutFlesh |= bDamageable;
+		if (bPlayImpacts && GetNetMode() != NM_DedicatedServer)
+		{
+			UMSFXLibrary::SpawnImpact(World, Hit, Row.ImpactFX.LoadSynchronous(), bDamageable);
+		}
+		if (!bApplyDamage)
+		{
+			continue;
+		}
 		const bool bHead = UMSCombatLibrary::IsHeadshot(Hit);
 		FMSDamageInfo Info;
 		Info.Amount = UMSCombatLibrary::ComputeBulletDamage(Row, Hit.Distance, bHead, H ? H->GetWeaponDamageScale() : 1.f);
@@ -387,9 +530,7 @@ void AMSWeapon::FireHitscan(const FVector& Start, const FVector& Direction, floa
 		Info.Instigator = H ? H->GetHolderController() : nullptr;
 		Info.Causer = this;
 		Info.SourceTeam = H ? H->GetHolderTeam() : EMSTeam::Neutral;
-		const FMSHitReport Report = UMSCombatLibrary::DealDamage(HitActor, Info, Hit.GetComponent());
-
-		UMSFXLibrary::SpawnImpact(World, Hit, Row.ImpactFX.LoadSynchronous(), Report.bHitDamageable);
+		const FMSHitReport Report = UMSCombatLibrary::DealDamage(Hit.GetActor(), Info, Hit.GetComponent());
 		if (Report.bHitDamageable)
 		{
 			Combined.bHitDamageable = true;
@@ -399,18 +540,97 @@ void AMSWeapon::FireHitscan(const FVector& Start, const FVector& Direction, floa
 			Combined.HealthDamage += Report.HealthDamage;
 		}
 	}
-	if (Combined.bHitDamageable && H)
+	return Combined;
+}
+
+void AMSWeapon::ServerFire_Implementation(FVector_NetQuantize Start, const TArray<FVector_NetQuantizeNormal>& Directions)
+{
+	IMSWeaponHolder* H = GetHolder();
+	if (!H || Directions.Num() == 0 || Directions.Num() > 32 || !bEquipped)
 	{
-		H->OnWeaponHit(Combined);
+		return;
+	}
+	if (AmmoInMag <= 0)
+	{
+		// Out of sync by a round (reload timing): accept if the client still had reserve, refill from it.
+		if (AmmoReserve <= 0)
+		{
+			return;
+		}
+		--AmmoReserve;
+		++AmmoInMag;
+		CancelReload();
+	}
+	--AmmoInMag;
+	TArray<FVector> Dirs;
+	for (const FVector_NetQuantizeNormal& D : Directions)
+	{
+		Dirs.Add(D);
+	}
+	TArray<FVector> Ends;
+	bool bFlesh = false;
+	const bool bListenServer = GetNetMode() == NM_ListenServer;
+	if (Row.bProjectile)
+	{
+		SpawnProjectile(Start, Dirs[0]);
+	}
+	else
+	{
+		const FMSHitReport Report = TraceShots(Start, Dirs, true, bListenServer, Ends, bFlesh);
+		if (Report.bHitDamageable)
+		{
+			H->OnWeaponHit(Report);   // the player forwards this to its owning client (hitmarker)
+		}
+	}
+	if (bListenServer)
+	{
+		PlayLocalFireCosmetics(Ends, false);   // the host sees the client's shot
+	}
+	UAISense_Hearing::ReportNoiseEvent(GetWorld(), Start, 1.f, GetInstigator() ? Cast<AActor>(GetInstigator()) : Holder.Get(), 6000.f, TEXT("Gunshot"));
+	TArray<FVector_NetQuantize> NetEnds;
+	for (const FVector& E : Ends)
+	{
+		NetEnds.Add(E);
+	}
+	MulticastFireFX(GetMuzzleTransform().GetLocation(), NetEnds, bFlesh);
+}
+
+void AMSWeapon::MulticastFireFX_Implementation(FVector_NetQuantize Muzzle, const TArray<FVector_NetQuantize>& Ends, bool bFlesh)
+{
+	// The server and the shooter already played this shot.
+	if (HasAuthority() || IsHolderLocallyControlled() || GetNetMode() == NM_DedicatedServer)
+	{
+		return;
+	}
+	UWorld* World = GetWorld();
+	++TotalShots;
+	UMSFXLibrary::SpawnMuzzleFlash(World, GetMuzzleTransform(), Row.MuzzleFlashFX.LoadSynchronous(), Row.MuzzleLightIntensity, nullptr);
+	if (Visual)
+	{
+		Visual->PlayFireAnim();
+	}
+	for (int32 I = 0; I < Ends.Num(); ++I)
+	{
+		if (I == 0 && Row.TracerEveryNth > 0 && TotalShots % Row.TracerEveryNth == 0)
+		{
+			UMSFXLibrary::SpawnTracer(World, Muzzle, Ends[I], Row.TracerFX.LoadSynchronous());
+		}
+		FHitResult Fake;
+		Fake.ImpactPoint = Ends[I];
+		Fake.ImpactNormal = (FVector(Muzzle) - FVector(Ends[I])).GetSafeNormal();
+		UMSFXLibrary::SpawnImpact(World, Fake, Row.ImpactFX.LoadSynchronous(), bFlesh);
+	}
+	if (UMSAudioSubsystem* Audio = World->GetSubsystem<UMSAudioSubsystem>())
+	{
+		Audio->PlayGunshot(Muzzle, Row, false);
 	}
 }
 
-void AMSWeapon::FireProjectile(const FVector& Start, const FVector& Direction, float Spread)
+void AMSWeapon::SpawnProjectile(const FVector& Start, const FVector& Direction)
 {
 	IMSWeaponHolder* H = GetHolder();
-	const FVector Dir = RandomInCone(Direction, Spread);
 	// Spawn from the muzzle but aim at what the crosshair points at.
-	FVector Target = Start + Dir * 10000.f;
+	FVector Target = Start + Direction * 10000.f;
 	FHitResult Hit;
 	FCollisionQueryParams Params(SCENE_QUERY_STAT(MSProjectileAim), false, this);
 	Params.AddIgnoredActor(Holder);

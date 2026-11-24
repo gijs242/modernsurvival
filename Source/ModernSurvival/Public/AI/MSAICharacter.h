@@ -55,11 +55,17 @@ public:
 
 	virtual void Tick(float DeltaSeconds) override;
 	virtual FVector GetPawnViewLocation() const override;
+	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
+	virtual void OnStartCrouch(float HalfHeightAdjust, float ScaledHalfHeightAdjust) override;
+	virtual void OnEndCrouch(float HalfHeightAdjust, float ScaledHalfHeightAdjust) override;
 
 protected:
 	virtual void BeginPlay() override;
 	virtual void EndPlay(const EEndPlayReason::Type Reason) override;
 	void BuildVisual();
+	/** Row-driven setup that every machine does (clients via OnRep_EnemyRow). */
+	void ApplyRowLocally();
+	UFUNCTION() void OnRep_EnemyRow();
 	void BuildPlaceholderHumanoid(float Scale, bool bHeavy);
 	void BuildPlaceholderDog();
 	void SetupHitbox(UPrimitiveComponent* Comp, bool bHead);
@@ -74,9 +80,9 @@ protected:
 	UPROPERTY(Transient) TObjectPtr<UPrimitiveComponent> PlaceholderTorso;
 	UPROPERTY(Transient) TObjectPtr<UAudioComponent> LoopAudio;
 
-	FName EnemyRowName;
+	UPROPERTY(ReplicatedUsing = OnRep_EnemyRow) FName EnemyRowName;
 	FMSEnemyRow EnemyRow;
-	EMSTeam Team = EMSTeam::Enemy;
+	UPROPERTY(Replicated) EMSTeam Team = EMSTeam::Enemy;
 	float DamageMultiplier = 1.f;
 	float AccuracyMultiplier = 1.f;
 	FVector AimPoint = FVector::ZeroVector;
