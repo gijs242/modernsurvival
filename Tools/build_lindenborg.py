@@ -415,6 +415,12 @@ def main():
     foot = G.mask([snap(fp_b)]) | ~np.isnan(height)
     height[foot & np.isnan(height)] = np.nanmin(height)
     two_storey = foot & (height > 6.0)
+    # Confirmed by the owner: the large single-storey block (north-west, ~630 m2) is a roofed,
+    # open-sided bike storage, not an aula. Its sides are open (columns only).
+    single_parts = [i for i, (_, h) in enumerate(parts) if h < 6.0]
+    shed_idx = max(single_parts, key=lambda i: abs(signed_area(parts[i][0]))) if single_parts else None
+    shed = (G.mask([part_polys_b[shed_idx][0]]) & foot & ~two_storey) if shed_idx is not None else np.zeros_like(foot)
+    shed_f = shed.astype(float)
     print(f"parts: {[(round(h, 2), round(abs(signed_area(r)))) for r, h in parts]}")
 
     # Storey bands for window cutting: ground floor and first floor.
@@ -440,7 +446,8 @@ def main():
     street_dir = (street_dir[0] / sd, street_dir[1] / sd)
 
     edges = []
-    for ring_l, h in parts:
+    shed_columns = []
+    for part_i, (ring_l, h) in enumerate(parts):
         n = len(ring_l)
         for i in range(n):
             p, q = ring_l[i], ring_l[(i + 1) % n]
@@ -453,16 +460,31 @@ def main():
             out_pt = (mid[0] - inward[0] * 0.8, mid[1] - inward[1] * 0.8)
             h_out = G.sample(height, *F.to_b(*out_pt))
             h_out = 0.0 if h_out is None or np.isnan(h_out) else float(h_out)
+            out_in_shed = bool(G.sample(shed_f, *F.to_b(*out_pt)) or 0.0)
+            if part_i == shed_idx:
+                if h_out < 0.5:                           # open side: roof on columns every ~5 m
+                    k = max(1, int(math.ceil(length / 5.0)))
+                    for j in range(k + 1):
+                        t = j / k
+                        shed_columns.append((p[0] + dx * t + inward[0] * 0.25, p[1] + dy * t + inward[1] * 0.25, h))
+                continue
+            if out_in_shed:
+                h_out = 0.0                               # the shed is outside: full-height wall from the ground
             if h - h_out < 0.5:
                 continue                                  # internal edge between equal-height parts
-            edges.append({"p": p, "q": q, "inward": inward, "len": length, "h": h, "h_out": h_out, "mid": mid})
+            edges.append({"p": p, "q": q, "inward": inward, "len": length, "h": h, "h_out": h_out, "mid": mid, "faces_shed": out_in_shed})
 
     # Main entrance: long ground-level edge whose outward normal points most at the street.
     ground_edges = [e for e in edges if e["h_out"] < 0.5 and e["len"] >= 6]
+    # Confirmed by the owner: the main entrance is on the SOUTH side. Pick the south-facing outer
+    # wall (not facing the bike storage) that also faces the street/parking most.
     def street_score(e):
         out = (-e["inward"][0], -e["inward"][1])
-        return (out[0] * street_dir[0] + out[1] * street_dir[1]) * min(e["len"], 30)
-    main_edge = max(ground_edges, key=street_score)
+        south = -out[1]
+        street = out[0] * street_dir[0] + out[1] * street_dir[1]
+        return (2.0 * south + 0.5 * street) * min(e["len"], 30)
+    south_edges = [e for e in ground_edges if not e.get("faces_shed") and -(-e["inward"][1]) > 0.5]
+    main_edge = max(south_edges or ground_edges, key=street_score)
     perimeter = sum(e["len"] for e in ground_edges)
     if ruin:
         ruin.keep_clear.append((main_edge["mid"][0], main_edge["mid"][1], ENTRANCE_CLEAR))
@@ -478,6 +500,11 @@ def main():
             acc = 0.0
             s = e["len"] * 0.5
             e["doors"].append((s - 0.9, s + 0.9))          # fire exit / side door
+    shed_walls = [e for e in ground_edges if e.get("faces_shed")]
+    if shed_walls:
+        sw = max(shed_walls, key=lambda e: e["len"])
+        if not sw["doors"]:
+            sw["doors"].append((sw["len"] / 2 - 0.9, sw["len"] / 2 + 0.9))
     print(f"exterior walls: {len(edges)} segments, ground perimeter {perimeter:.0f} m, main entrance edge {main_edge['len']:.1f} m")
 
     for wi, e in enumerate(edges):
@@ -514,7 +541,11 @@ def main():
             L.box_b(f"{name}_{i:03d}", layer, folder, u0, v0, u1, v1, top - thick, top, material, "floor")
         return len(rects)
 
-    n = emit_slabs(foot, GROUND_TOP, SLAB, "GroundFloor", "Measured", "Lindenborg/Measured/Floors", "Floor")
+    n = emit_slabs(foot & ~shed, GROUND_TOP, SLAB, "GroundFloor", "Measured", "Lindenborg/Measured/Floors", "Floor")
+    n += emit_slabs(shed, 0.05, 0.25, "BikeStorageFloor", "Measured", "Lindenborg/Measured/BikeStorage", "MAT_paving")
+    for ci, (cx_, cy_, ch) in enumerate(shed_columns):
+        L.box_local(f"BikeStorageColumn_{ci:02d}", "Measured", "Lindenborg/Measured/BikeStorage", cx_, cy_, 0.35, 0.35, 0.0, ch - ROOF_SLAB,
+                    F.theta, "Concrete", "column")
     roof_hole = np.zeros_like(foot)
     floor_hole = np.zeros_like(foot)
     holes = []
@@ -531,7 +562,7 @@ def main():
 
     # 3) Guessed interior --------------------------------------------------------------------
     plan_rects_2, _ = decompose(two_storey, min_cells=int(40 / CELL ** 2))
-    ground_only = foot & ~two_storey
+    ground_only = foot & ~two_storey & ~shed
     plan_rects_1, _ = decompose(ground_only, min_cells=int(40 / CELL ** 2))
     stair_void = np.zeros_like(foot)
     room_id = 0
@@ -552,7 +583,14 @@ def main():
         long_len, short_len = (w_u, w_v) if along_u else (w_v, w_u)
         layer, folder = "Guessed", f"Lindenborg/Guessed/Floor{floor}"
         area = w_u * w_v
-        is_hall = floor == 0 and (rect_contains(rect, mu_in, mv_in) or (area > 350 and short_len > 14 and floor == 0 and not allow_stairs))
+        has_entrance = floor == 0 and rect_contains(rect, mu_in, mv_in)
+        is_hall = floor == 0 and ((has_entrance and area <= 600) or (area > 350 and short_len > 14 and not allow_stairs))
+        # In a long wing, only a section around the main doors becomes the entrance hall.
+        skip = None
+        if has_entrance and not is_hall:
+            a_e = (mu_in - u0) if along_u else (mv_in - v0)
+            skip = (a_e - 8.0, a_e + 8.0)
+            L.areas.append({"name": "EntranceHall", "type": "hall", "floor": 0, "area_m2": round(16 * short_len)})
         kind = "hall" if is_hall else ("double" if short_len >= 15 else ("single" if short_len >= 8 else "open"))
         L.areas.append({"name": f"{'Aula' if is_hall else 'Wing'}_{floor}_{room_id}", "type": kind, "floor": floor,
                         "rect_cm": [Frame.ue(*F.from_b(u0, v0), 0)[:2], Frame.ue(*F.from_b(u1, v1), 0)[:2]], "area_m2": round(area)})
@@ -591,6 +629,8 @@ def main():
             # Corridor wall with a door per room.
             for k in range(n_rooms):
                 a0, a1 = k * room_len, (k + 1) * room_len
+                if skip and a1 > skip[0] and a0 < skip[1]:
+                    continue
                 d0 = a0 + 0.8
                 wb0 = wall_b - INNER_T / 2
                 B(a0, wb0, d0, wb0 + INNER_T, storey_lo, ceiling, f"CorrWall_{room_id}_{si}_{k}a")
@@ -602,6 +642,8 @@ def main():
             # Furniture-height cover in rooms (desks rows) - helps fights feel like a school.
             for k in range(n_rooms):
                 a0 = k * room_len
+                if skip and a0 + room_len > skip[0] and a0 < skip[1]:
+                    continue
                 for row in range(2):
                     bb = b_from + (b_to - b_from) * (0.35 + 0.3 * row)
                     B(a0 + 1.5, bb - 0.35, a0 + room_len - 1.5, bb + 0.35, storey_lo, storey_lo + 0.75, f"Desks_{room_id}_{si}_{k}_{row}", "Furniture", "prop")
@@ -632,6 +674,23 @@ def main():
         r0, c0, r1, c1 = rect
         roof_h = float(np.nanmax(height[r0:r1 + 1, c0:c1 + 1]))
         plan(rect, 1, STOREY_TOP, roof_h - ROOF_SLAB, False)
+    rack_rects, _ = decompose(shed, min_cells=int(12 / CELL ** 2))
+    for ri, rect in enumerate(rack_rects):
+        u0, v0, u1, v1 = G.rect_to_b(*rect)
+        along_u = (u1 - u0) >= (v1 - v0)
+        long_len, short_len = (u1 - u0, v1 - v0) if along_u else (v1 - v0, u1 - u0)
+        if long_len < 6.0:
+            continue
+        rows = int((short_len - 1.2) // 2.6)
+        for k in range(rows):
+            b = 1.3 + k * 2.6
+            if along_u:
+                L.box_b(f"BikeRack_{ri}_{k}", "Guessed", "Lindenborg/Guessed/BikeStorage", u0 + 1.0, v0 + b - 0.25, u1 - 1.0, v0 + b + 0.25, 0.05, 0.95, "Bikes", "prop")
+            else:
+                L.box_b(f"BikeRack_{ri}_{k}", "Guessed", "Lindenborg/Guessed/BikeStorage", u0 + b - 0.25, v0 + 1.0, u0 + b + 0.25, v1 - 1.0, 0.05, 0.95, "Bikes", "prop")
+    if shed.any():
+        L.areas.append({"name": "BikeStorage", "type": "bike_storage", "floor": 0, "area_m2": round(float(shed.sum()) * CELL * CELL)})
+
     for rect in plan_rects_1:
         r0, c0, r1, c1 = rect
         roof_h = float(np.nanmax(height[r0:r1 + 1, c0:c1 + 1]))
@@ -781,18 +840,6 @@ def main():
                 if inside_poly(cx_ + du * ca - dv * sa, cy_ + du * sa + dv * ca, fp_local_poly):
                     return False
         return True
-
-    for side in (-1, 1):
-        for dist in (16, 24, 32, 40):
-            sx = main_edge["mid"][0] + out_n[0] * dist + tan[0] * side * 14
-            sy = main_edge["mid"][1] + out_n[1] * dist + tan[1] * side * 14
-            if clear_of_school(sx, sy, 9.5, 2.5, ang_edge):
-                break
-        else:
-            continue
-        L.box_local(f"BikeShedRoof_{side}", "Guessed", "Lindenborg/Guessed/Props", sx, sy, 18, 4.5, 2.3, 2.45, ang_edge, "Shed", "prop")
-        L.box_local(f"BikeShedBack_{side}", "Guessed", "Lindenborg/Guessed/Props", sx - out_n[0] * 2.2, sy - out_n[1] * 2.2, 18, 0.1, 0, 2.3, ang_edge, "Shed", "wall")
-        L.box_local(f"BikeRack_{side}", "Guessed", "Lindenborg/Guessed/Props", sx, sy, 17, 1.6, 0, 0.9, ang_edge, "Bikes", "prop")
 
     # Write terrain OBJ (UE axes, cm). One material group per surface class.
     names = {v: k_ for k_, v in classes.items()}

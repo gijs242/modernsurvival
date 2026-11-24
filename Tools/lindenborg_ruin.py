@@ -229,6 +229,15 @@ class Ruin:
             if name.startswith("CorrWall_") and r.random() < self.S.corridor_wall_holes and bx["size"][0] > 150:
                 self.removed += 1
                 continue
+            if name.startswith("BikeRack_") and r.random() < 0.55:
+                self.removed += 1
+                yaw = -math.radians(bx["yaw"])
+                half = bx["size"][0] / 200.0
+                for k in range(4):
+                    t = r.uniform(-half, half)
+                    self.add(f"FallenBikes{name[8:]}_{k}", "BikeStorage", x + t * math.cos(yaw) + r.normal(0, 0.4), y + t * math.sin(yaw) + r.normal(0, 0.4),
+                             r.uniform(1.4, 2.6), 0.5, z0, z0 + 0.9, yaw + r.uniform(-0.6, 0.6), "Bikes", "prop", roll=float(r.uniform(65, 90)))
+                continue
             if name.startswith("Desks_"):
                 self.removed += 1
                 if r.random() < self.S.desks_scattered:

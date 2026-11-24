@@ -249,9 +249,11 @@ renovation was later stopped.
    both sides; single-loaded corridors in narrower parts. That gives about 55 classrooms on the
    ground floor and 59 on the first floor, which is too many (the real building also has
    offices, labs, toilets and so on).
-3. **Entrance hall / aula** where the main entrance is assumed (the south side facing the parking
-   and street, from BGT), plus the big single-storey part in the north-west (≈630 m²) treated as
-   an open aula/canteen with columns.
+3. **Entrance hall:** a ~16 m open section of the wing around the main doors. The south
+   side is confirmed by you; the exact door position along that façade is guessed.
+   **Bike storage** (confirmed by you): the big single-storey block in the north-west (≈630 m²)
+   is roofed and open-sided, with columns every ~5 m and a door into the school. The rack rows
+   inside are guessed.
 4. 7 staircases at corridor ends (20 steps, 6 m run).
 5. Exterior doors: the main entrance (3.6 m) plus a side/fire door about every 38 m of perimeter.
    Window rhythm: 2.0 m windows on a 3.6 m bay, sill 0.9 m, head 2.8 m, on every façade.
@@ -269,14 +271,15 @@ renovation was later stopped.
 
 ## 8. Questions for you
 
-1. Does the main entrance really face south (parking/street side)? Where are the aula, canteen,
-   gym(s), stairs and corridors? A fire-escape plan photo (the "vluchtplan" on the wall) would
-   answer all of this at once.
+Answered: main entrance faces south (yes); north-west block = roofed bike storage; neighbouring
+campus building stays non-playable (it remains an LoD1 backdrop block); co-op = yes (being built
+next, see the co-op section once it lands).
+
+Still open:
+1. Where are the aula/canteen, gym(s), stairs and corridors, and where exactly along the south
+   façade is the main door? A photo of the fire-escape plans (the "vluchtplan" on the wall)
+   would answer all of this at once.
 2. Is the first-floor height about right (3.6–3.8 m floor to floor)?
-3. Is the north-west single-storey block an aula/canteen, a sports hall, or something else?
-4. Should the neighbouring campus building (likely Nijeborg) be playable too?
-5. Single-player is the target for now. Do you want co-op (MW3-style 2 players) as a next
-   milestone?
 
 ## 9. If it doesn't compile: likely API drift points
 
