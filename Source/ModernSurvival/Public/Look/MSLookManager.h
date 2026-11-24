@@ -21,6 +21,9 @@ public:
 	virtual void Tick(float DeltaSeconds) override;
 	void ApplyBaseGrade();
 
+	/** DT_LookFeel row for this map ("Default", "Abandoned", ...). Place one in a level to pick its grade. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Look") FName LookRow = TEXT("Default");
+
 protected:
 	virtual void BeginPlay() override;
 

@@ -123,8 +123,17 @@ Useful console commands during play: `MSGiveCash 10000`, `MSGiveAll`, `MSGod`, `
   survive 10 s to get up, once per game) for the game-over screen with stats and best wave.
 - Grade: desaturated, contrasty, light film grain, vignette (all in `Data/LookFeel.csv`).
 
-**M6 – Lindenborg school**
-- Open `L_Lindenborg`. Window → World Partition → Data Layers: toggle **Guessed** to see
+**M6 – Lindenborg school (abandoned / war-damaged)**
+- Open `L_Lindenborg`. It should look abandoned:
+  - Overcast, hazy light and a dusty, green-grey grade (LookFeel row `Abandoned`).
+  - Four roof collapses with rubble and fallen slabs. One goes through the first floor, so you
+    can drop from upstairs.
+  - Blown-out wall breaches you can walk through, and boarded-up windows.
+  - Wrecked classrooms: knocked-down walls, scattered and tipped desks, debris, ceiling panels.
+  - Outside: burnt-out cars, abandoned sandbag positions, containers, barrels, tyres, scorch
+    marks, overgrown bushes and grass, and ruined neighbouring houses.
+  - Bushes and grass hide you but don't stop bullets.
+- Toggle the **Destruction** data layer to see the dressing on its own. Window → World Partition → Data Layers: toggle **Guessed** to see
   exactly what is invented. Measured shell = 3D BAG heights. You start in the guessed entrance
   hall on the south side; buy stations are in the hall and on the forecourt.
 - `Docs/lindenborg_plan_ground.png` / `_first.png` show the layout from above.
@@ -170,6 +179,9 @@ Useful console commands during play: `MSGiveCash 10000`, `MSGiveAll`, `MSGod`, `
   runtime reverb effect and a delayed, pitched-down "tail" copy of each gunshot.
 - **Navmesh is dynamic** (Recast runtime generation) so the sentry and edits to the grey-box
   update it.
+- **Lindenborg is abandoned and war-damaged** (your request). It's procedural and seeded rather
+  than hand-placed, so it regenerates cleanly when the real floor plan arrives. Each map picks
+  its colour grade with a placed `MSLookManager` (`LookRow`); other maps keep `Default`.
 - **Map scale:** 1 uu = 1 cm everywhere; Lindenborg is at true scale from 3D BAG. Floor height
   splits are guessed.
 - **No Call of Duty names:** the game is "Modern Survival"; guns are "Kestrel Carbine",
@@ -247,6 +259,13 @@ renovation was later stopped.
    the entrance.
 7. Spawn points (outside ring + indoor corridor ends from wave 4) and buy-station positions
    (gameplay choices, not real).
+8. **The whole abandoned / war-damaged state is invented.** It's a seeded pass in
+   `Tools/lindenborg_ruin.py`, data layer "Destruction", about 2,650 extra pieces with about
+   300 shell/interior pieces knocked out.
+   - **Change it:** edit `RuinSettings` (amounts) or `RUIN_SEED` (different layout), then rerun
+     `python3 Tools/build_lindenborg.py --offline` and `setup_project.py lindenborg`.
+   - **Clean school:** `--intact` gives the undamaged building and the default grade.
+   - **What it keeps clear:** the main entrance, the buy stations and the doors (14 m).
 
 ## 8. Questions for you
 

@@ -156,6 +156,11 @@ MATERIALS = {
     "Crate": (0.3, 0.25, 0.15), "Guessed": (0.8, 0.5, 0.3),
     "MAT_grass": (0.18, 0.24, 0.12), "MAT_road": (0.07, 0.07, 0.07), "MAT_paving": (0.33, 0.31, 0.29),
     "MAT_water": (0.04, 0.07, 0.09), "MAT_parking": (0.16, 0.16, 0.16),
+    # Abandoned / destroyed dressing (Tools/lindenborg_ruin.py)
+    "Rubble": (0.36, 0.33, 0.3), "Debris": (0.42, 0.38, 0.33), "Panel": (0.7, 0.68, 0.62), "Rust": (0.3, 0.14, 0.07),
+    "Planks": (0.33, 0.24, 0.15), "BurntCar": (0.05, 0.045, 0.04), "Scorch": (0.02, 0.02, 0.02), "Sandbag": (0.42, 0.38, 0.26),
+    "Container": (0.22, 0.26, 0.2), "Tyre": (0.03, 0.03, 0.03), "Overgrowth": (0.12, 0.2, 0.07), "Grass": (0.25, 0.3, 0.12),
+    "Ruin": (0.3, 0.28, 0.27),
 }
 MAT_CACHE = {}
 
@@ -186,14 +191,17 @@ def build_materials():
 
 # ------------------------------------------------------------------------------------------ level helpers
 
-CUBE = None
+SHAPES = {}
+
+
+def shape_mesh(name="Cube"):
+    if name not in SHAPES:
+        SHAPES[name] = unreal.load_asset("/Engine/BasicShapes/" + name)
+    return SHAPES[name]
 
 
 def cube():
-    global CUBE
-    if CUBE is None:
-        CUBE = unreal.load_asset("/Engine/BasicShapes/Cube")
-    return CUBE
+    return shape_mesh("Cube")
 
 
 def open_or_create_level(path, partitioned=False):
@@ -221,12 +229,18 @@ def spawn(cls, loc, yaw=0.0, label=None, folder=None):
     return a
 
 
-def box(name, center, size, yaw=0.0, mat="Wall", folder="Greybox", tags=()):
+def box(name, center, size, yaw=0.0, mat="Wall", folder="Greybox", tags=(), pitch=0.0, roll=0.0, shape="Cube", collision=True):
     a = spawn(unreal.StaticMeshActor, center, yaw, name, folder)
     if not a:
         return None
+    if pitch or roll:
+        a.set_actor_rotation(unreal.Rotator(roll=roll, pitch=pitch, yaw=yaw), False)
     smc = a.static_mesh_component
-    smc.set_static_mesh(cube())
+    smc.set_static_mesh(shape_mesh(shape))
+    if not collision:
+        # Foliage, decals, ceiling tiles: you can see/shoot through, AI paths through.
+        smc.set_collision_profile_name("NoCollision")
+        smc.set_editor_property("can_ever_affect_navigation", False)
     smc.set_material(0, material(mat))
     a.set_actor_scale3d(unreal.Vector(size[0] / 100.0, size[1] / 100.0, size[2] / 100.0))
     if tags:
@@ -238,22 +252,23 @@ def ms_class(name):
     return unreal.load_class(None, "/Script/ModernSurvival." + name)
 
 
-def add_lighting(sun_pitch=-38.0, sun_yaw=35.0):
+def add_lighting(sun_pitch=-38.0, sun_yaw=35.0, sun_intensity=6.0, sun_color=(255, 244, 228), fog_density=0.02, sky_intensity=1.0):
     sun = spawn(unreal.DirectionalLight, (0, 0, 2000), 0, "Sun", "Lighting")
     sun.set_actor_rotation(unreal.Rotator(roll=0, pitch=sun_pitch, yaw=sun_yaw), False)
     lc = sun.get_component_by_class(unreal.DirectionalLightComponent)
     lc.set_mobility(unreal.ComponentMobility.MOVABLE)
-    lc.set_editor_property("intensity", 6.0)
+    lc.set_editor_property("intensity", sun_intensity)
     lc.set_editor_property("atmosphere_sun_light", True)
-    lc.set_editor_property("light_color", unreal.Color(255, 244, 228, 255))
+    lc.set_editor_property("light_color", unreal.Color(sun_color[0], sun_color[1], sun_color[2], 255))
     spawn(unreal.SkyAtmosphere, (0, 0, 0), 0, "SkyAtmosphere", "Lighting")
     sky = spawn(unreal.SkyLight, (0, 0, 500), 0, "SkyLight", "Lighting")
     slc = sky.get_component_by_class(unreal.SkyLightComponent)
     slc.set_mobility(unreal.ComponentMobility.MOVABLE)
     slc.set_editor_property("real_time_capture", True)
+    slc.set_editor_property("intensity", sky_intensity)
     fog = spawn(unreal.ExponentialHeightFog, (0, 0, 0), 0, "HeightFog", "Lighting")
     fc = fog.get_component_by_class(unreal.ExponentialHeightFogComponent)
-    fc.set_editor_property("fog_density", 0.02)
+    fc.set_editor_property("fog_density", fog_density)
     fc.set_editor_property("volumetric_fog", True)
     try:
         spawn(unreal.VolumetricCloud, (0, 0, 0), 0, "Clouds", "Lighting")
@@ -433,12 +448,19 @@ def build_lindenborg():
         L = json.load(f)
     open_or_create_level("/Game/Maps/L_Lindenborg", partitioned=True)
     set_game_mode("MSGameMode")
-    add_lighting(-35.0, 140.0)
+    abandoned = L.get("look_row", "Default") == "Abandoned"
+    if abandoned:
+        # Overcast, low hazy sun, thick dust in the air.
+        add_lighting(-22.0, 140.0, sun_intensity=2.5, sun_color=(214, 214, 200), fog_density=0.045, sky_intensity=0.8)
+    else:
+        add_lighting(-35.0, 140.0)
+    look = spawn(ms_class("MSLookManager"), (0, 0, 300), 0, "LookManager", "Lighting")
+    look.set_editor_property("look_row", L.get("look_row", "Default"))
 
     layers = {}
     try:
         dls = unreal.get_editor_subsystem(unreal.DataLayerEditorSubsystem)
-        for name in ("Measured", "Guessed", "Context"):
+        for name in ("Measured", "Guessed", "Context", "Destruction"):
             path = "/Game/Maps/Lindenborg/DL_" + name
             asset = unreal.load_asset(path) if eal.does_asset_exist(path) else None
             if not asset:
@@ -452,7 +474,7 @@ def build_lindenborg():
         warn("data layers unavailable ({}); using folders + actor tags instead".format(e))
         dls = None
 
-    by_layer = {"Measured": [], "Guessed": [], "Context": []}
+    by_layer = {"Measured": [], "Guessed": [], "Context": [], "Destruction": []}
     boxes = L["boxes"]
     with unreal.ScopedSlowTask(len(boxes), "Building Lindenborg grey-box") as task:
         task.make_dialog(True)
@@ -460,7 +482,8 @@ def build_lindenborg():
             if task.should_cancel():
                 break
             task.enter_progress_frame(1)
-            a = box(b["name"], b["center"], b["size"], b["yaw"], b["material"], b["folder"], (b["layer"], b["kind"]))
+            a = box(b["name"], b["center"], b["size"], b["yaw"], b["material"], b["folder"], (b["layer"], b["kind"]),
+                    b.get("pitch", 0.0), b.get("roll", 0.0), b.get("shape", "Cube"), b.get("collision", True))
             if a:
                 try:
                     a.set_editor_property("is_spatially_loaded", False)

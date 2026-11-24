@@ -3,6 +3,7 @@
 
     python3 Tools/build_lindenborg.py            # download (cached) + build
     python3 Tools/build_lindenborg.py --offline  # rebuild from Tools/.cache only
+    python3 Tools/build_lindenborg.py --intact   # without the abandoned / war-damage pass
 
 Sources (all public, see RawAssets/Lindenborg/SOURCES.md for licences):
   * 3D BAG (TU Delft / 3DGI): school footprint (LoD0) and roof parts with heights (LoD1.3),
@@ -31,6 +32,8 @@ from pathlib import Path
 
 import numpy as np
 from PIL import Image, ImageDraw
+
+from lindenborg_ruin import ENTRANCE_CLEAR, Ruin
 
 ROOT = Path(__file__).resolve().parent.parent
 CACHE = ROOT / "Tools" / ".cache" / "lindenborg"
@@ -264,32 +267,46 @@ class Layout:
         self.areas = []
         self.spawns = []
         self.stations = []
+        self.windows = []          # exterior window openings (for boarding up)
         self.player_start = None
         self.nav = None
 
-    def box_b(self, name, layer, folder, u0, v0, u1, v1, z0, z1, material, kind="block"):
+    @staticmethod
+    def _extra(entry, pitch, roll, shape, collision):
+        # Optional fields only when they differ from the defaults (keeps the JSON small).
+        if pitch:
+            entry["pitch"] = round(pitch, 2)
+        if roll:
+            entry["roll"] = round(roll, 2)
+        if shape != "Cube":
+            entry["shape"] = shape
+        if not collision:
+            entry["collision"] = False
+        return entry
+
+    def box_b(self, name, layer, folder, u0, v0, u1, v1, z0, z1, material, kind="block", pitch=0.0, roll=0.0, shape="Cube", collision=True):
         """Axis-aligned box in the building frame (metres)."""
         if u1 - u0 < 0.02 or v1 - v0 < 0.02 or z1 - z0 < 0.02:
             return
         cu, cv = (u0 + u1) / 2, (v0 + v1) / 2
         x, y = self.f.from_b(cu, cv)
-        self.boxes.append({
+        self.boxes.append(self._extra({
             "name": name, "layer": layer, "folder": folder, "material": material, "kind": kind,
             "center": Frame.ue(x, y, (z0 + z1) / 2),
             "size": [round((u1 - u0) * 100, 1), round((v1 - v0) * 100, 1), round((z1 - z0) * 100, 1)],
             "yaw": self.f.yaw_ue(self.f.theta),
-        })
+        }, pitch, roll, shape, collision))
 
-    def box_local(self, name, layer, folder, cx, cy, length, width, z0, z1, angle, material, kind="block"):
-        """Box in local metres rotated by angle (radians, CCW from east)."""
+    def box_local(self, name, layer, folder, cx, cy, length, width, z0, z1, angle, material, kind="block", pitch=0.0, roll=0.0, shape="Cube", collision=True):
+        """Box in local metres rotated by angle (radians, CCW from east). pitch/roll in degrees."""
         if length < 0.02 or width < 0.02 or z1 - z0 < 0.02:
             return
-        self.boxes.append({
+        self.boxes.append(self._extra({
             "name": name, "layer": layer, "folder": folder, "material": material, "kind": kind,
             "center": Frame.ue(cx, cy, (z0 + z1) / 2),
             "size": [round(length * 100, 1), round(width * 100, 1), round((z1 - z0) * 100, 1)],
             "yaw": self.f.yaw_ue(angle),
-        })
+        }, pitch, roll, shape, collision))
 
 
 def wall_with_openings(L: Layout, name, layer, folder, p, q, inward, z0, z1, bands, openings_fn, material, thickness=WALL_T):
@@ -322,6 +339,10 @@ def wall_with_openings(L: Layout, name, layer, folder, p, q, inward, z0, z1, ban
         # Solid parts: below the lowest opening sill per span, above heads, and piers.
         cursor = 0.0
         for k, (s0, s1, h0, h1) in enumerate(sorted(ops)):
+            if h0 > 0.05:
+                m = (s0 + s1) / 2
+                L.windows.append({"x": p[0] + ux * m + inward[0] * (thickness + 0.03), "y": p[1] + uy * m + inward[1] * (thickness + 0.03),
+                                  "angle": ang, "width": s1 - s0, "z0": lo + h0, "z1": lo + h1, "band": bi, "wall": name})
             piece(cursor, s0, lo, hi, f"b{bi}p{k}")
             piece(s0, s1, lo, lo + h0, f"b{bi}s{k}")
             piece(s0, s1, lo + h1, hi, f"b{bi}l{k}")
@@ -346,6 +367,7 @@ def window_pattern(length, band, bay=3.6, width=2.0, sill=0.9, head=2.8):
 
 def main():
     offline = "--offline" in sys.argv
+    intact = "--intact" in sys.argv
     OUT.mkdir(parents=True, exist_ok=True)
     DOCS.mkdir(parents=True, exist_ok=True)
 
@@ -373,6 +395,7 @@ def main():
     print(f"context buildings: {len(neighbours)}")
 
     L = Layout(F)
+    ruin = None if intact else Ruin(L, F)
 
     # 2) School shell (Measured) -------------------------------------------------------------
     parts = []
@@ -441,6 +464,8 @@ def main():
         return (out[0] * street_dir[0] + out[1] * street_dir[1]) * min(e["len"], 30)
     main_edge = max(ground_edges, key=street_score)
     perimeter = sum(e["len"] for e in ground_edges)
+    if ruin:
+        ruin.keep_clear.append((main_edge["mid"][0], main_edge["mid"][1], ENTRANCE_CLEAR))
     exit_every = 38.0
     acc = 0.0
     for e in ground_edges:
@@ -478,6 +503,9 @@ def main():
             L.areas.append({"name": f"Door_{wi:03d}", "type": "door", "floor": 0,
                             "where": Frame.ue(e["p"][0] + dx * s, e["p"][1] + dy * s, 0)})
 
+    if ruin:
+        ruin.breach_walls(GROUND_TOP, STOREY_TOP)
+
     # Slabs: ground floor, first floor (minus stair voids, added below), roofs.
     def emit_slabs(mask, top, thick, name, layer, folder, material):
         rects, _ = decompose(mask)
@@ -487,10 +515,17 @@ def main():
         return len(rects)
 
     n = emit_slabs(foot, GROUND_TOP, SLAB, "GroundFloor", "Measured", "Lindenborg/Measured/Floors", "Floor")
+    roof_hole = np.zeros_like(foot)
+    floor_hole = np.zeros_like(foot)
+    holes = []
+    if ruin:
+        pu, pv = F.to_b(*main_edge["mid"])
+        roof_hole, floor_hole, holes = ruin.plan_holes(G, foot, two_storey, height, [(pu, pv, ENTRANCE_CLEAR + 6.0)])
+        print(f"collapses: {[(h['kind'], round(h['w'], 1), round(h['d'], 1)) for h in holes]}")
     roof_heights = sorted(set(round(h, 2) for _, h in parts))
     nr = 0
     for h in roof_heights:
-        m = foot & (np.abs(height - h) < 0.05)
+        m = foot & (np.abs(height - h) < 0.05) & ~roof_hole
         nr += emit_slabs(m, h, ROOF_SLAB, f"Roof_{int(h * 100)}", "Measured", "Lindenborg/Measured/Roofs", "Roof")
     print(f"slabs: ground {n}, roofs {nr}")
 
@@ -602,7 +637,12 @@ def main():
         roof_h = float(np.nanmax(height[r0:r1 + 1, c0:c1 + 1]))
         plan(rect, 0, GROUND_TOP, roof_h - ROOF_SLAB, False)
 
-    nf = emit_slabs(two_storey & ~stair_void, STOREY_TOP, SLAB, "FirstFloor", "Guessed", "Lindenborg/Guessed/FirstFloorSlab", "Floor")
+    nf = emit_slabs(two_storey & ~stair_void & ~floor_hole, STOREY_TOP, SLAB, "FirstFloor", "Guessed", "Lindenborg/Guessed/FirstFloorSlab", "Floor")
+    if ruin:
+        ruin.dress_holes(holes, GROUND_TOP, STOREY_TOP, ROOF_SLAB)
+        ruin.wreck_interior()
+        ruin.board_windows()
+        ruin.scatter_debris(G, foot, two_storey & ~stair_void & ~floor_hole, GROUND_TOP, STOREY_TOP)
     print(f"interior: {len(plan_rects_2)} two-storey wings, {len(plan_rects_1)} single-storey areas, first floor slab {nf} boxes, hall {hall_rect is not None}")
 
     # 4) Context buildings (Measured, LoD1 blocks) -------------------------------------------
@@ -783,11 +823,53 @@ def main():
     colors = {"grass": (0.18, 0.24, 0.12), "road": (0.09, 0.09, 0.09), "paving": (0.32, 0.3, 0.28), "water": (0.05, 0.08, 0.1), "parking": (0.2, 0.2, 0.2)}
     (OUT / "terrain.mtl").write_text("".join(f"newmtl MAT_{k_}\nKd {c[0]} {c[1]} {c[2]}\n\n" for k_, c in colors.items()))
 
+    if ruin:
+        def z_at(x, y):
+            r_ = min(n_cells - 1, max(0, int((half - y) / TERRAIN_CELL)))
+            c_ = min(n_cells - 1, max(0, int((x + half) / TERRAIN_CELL)))
+            return float(z[r_, c_])
+
+        # Where outdoor props may go: not in water, not inside neighbouring buildings.
+        ctx_im = Image.new("L", (size, size), 0)
+        cd = ImageDraw.Draw(ctx_im)
+        for bx in L.boxes:
+            if bx["layer"] != "Context":
+                continue
+            cx_, cy_ = bx["center"][0] / 100, -bx["center"][1] / 100
+            l_, w_ = bx["size"][0] / 200 + 1.0, bx["size"][1] / 200 + 1.0
+            a_ = math.radians(-bx["yaw"])
+            pts = [(cx_ + dx * math.cos(a_) - dy * math.sin(a_), cy_ + dx * math.sin(a_) + dy * math.cos(a_)) for dx, dy in ((-l_, -w_), (l_, -w_), (l_, w_), (-l_, w_))]
+            cd.polygon([((px_ + half) / res, (half - py_) / res) for px_, py_ in pts], fill=1)
+        ctx_block = np.array(ctx_im, dtype=bool) | (cls == classes["water"])
+
+        def free_at(x, y, clearance):
+            px, py = int((x + half) / res), int((half - y) / res)
+            k_ = int(math.ceil(clearance / res))
+            if not (k_ <= px < size - k_ and k_ <= py < size - k_):
+                return False
+            return not ctx_block[py - k_:py + k_ + 1, px - k_:px + k_ + 1].any()
+
+        def near_school(x, y, margin):
+            if inside_poly(x, y, fp_local_poly):
+                return True
+            for i_ in range(len(fp_local_poly)):
+                (x1, y1), (x2, y2) = fp_local_poly[i_], fp_local_poly[(i_ + 1) % len(fp_local_poly)]
+                dx, dy = x2 - x1, y2 - y1
+                t_ = max(0.0, min(1.0, ((x - x1) * dx + (y - y1) * dy) / max(1e-9, dx * dx + dy * dy)))
+                if math.hypot(x - (x1 + t_ * dx), y - (y1 + t_ * dy)) < margin:
+                    return True
+            return False
+
+        ruin.ruin_context(z_at)
+        ruin.outside(z_at, free_at, near_school, main_edge["mid"], out_n)
+        print(f"destruction: {ruin.summary()}")
+
     # 6) Gameplay: spawn points, buy stations, player start, nav bounds -----------------------
     bldg_mask_local = Image.new("L", (size, size), 0)
     dm = ImageDraw.Draw(bldg_mask_local)
     for bx in L.boxes:
-        if bx["layer"] == "Context" or bx["kind"] in ("wall",):
+        solid_ruin = bx["layer"] == "Destruction" and bx.get("collision", True) and bx["kind"] in ("cover", "prop", "rubble")
+        if bx["layer"] == "Context" or bx["kind"] in ("wall",) or solid_ruin:
             cx_, cy_ = bx["center"][0] / 100, -bx["center"][1] / 100
             r_ = max(bx["size"][0], bx["size"][1]) / 200 + 1.0
             dm.ellipse([((cx_ - r_ + half) / res, (half - cy_ - r_) / res), ((cx_ + r_ + half) / res, (half - cy_ + r_) / res)], fill=1)
@@ -839,6 +921,8 @@ def main():
         "player_start": L.player_start,
         "nav_bounds": L.nav,
         "terrain": {"obj": "terrain.obj", "half_size_m": half, "cell_m": TERRAIN_CELL},
+        "destruction": ruin.summary() if ruin else {"intact": True},
+        "look_row": "Default" if intact else "Abandoned",
     }
     (OUT / "lindenborg_layout.json").write_text(json.dumps(layout, indent=1))
     counts = {}
@@ -873,7 +957,7 @@ def render_previews(L: Layout, F: Frame, G: Grid, fp, cls, half, res):
             d.line([P(g, -span), P(g, span)], fill=(205, 205, 200), width=1)
             d.line([P(-span, g), P(span, g)], fill=(205, 205, 200), width=1)
 
-        colors = {"Measured": (20, 20, 20), "Guessed": (200, 40, 30), "Context": (110, 110, 120)}
+        colors = {"Measured": (20, 20, 20), "Guessed": (200, 40, 30), "Context": (110, 110, 120), "Destruction": (105, 80, 60)}
         for bx in sorted(L.boxes, key=lambda b: b["kind"] != "floor"):
             z0 = (bx["center"][2] - bx["size"][2] / 2) / 100
             z1 = (bx["center"][2] + bx["size"][2] / 2) / 100
@@ -892,6 +976,14 @@ def render_previews(L: Layout, F: Frame, G: Grid, fp, cls, half, res):
                 fill = (60, 90, 200)
             elif bx["kind"] == "prop":
                 fill = (170, 120, 60)
+            elif bx["kind"] in ("rubble", "debris"):
+                fill = (105, 80, 60)
+            elif bx["kind"] == "foliage":
+                fill = (70, 120, 55)
+            elif bx["kind"] == "decal":
+                fill = (45, 42, 40)
+            elif bx["kind"] == "cover":
+                fill = (150, 135, 95)
             else:
                 fill = colors[bx["layer"]]
             d.polygon([P(*p) for p in pts], fill=fill)
@@ -909,6 +1001,7 @@ def render_previews(L: Layout, F: Frame, G: Grid, fp, cls, half, res):
         d.text((20, 40), "black = measured shell (3D BAG)   red = GUESSED interior   blue = stairs", fill=(0, 0, 0))
         d.text((20, 60), "green dots = spawn points   orange = buy stations   cyan = player start", fill=(0, 0, 0))
         d.text((20, 80), "grey blocks = neighbouring buildings (3D BAG)   ground colours = BGT", fill=(0, 0, 0))
+        d.text((20, 100), "brown = rubble / debris / sandbags (Destruction layer)   green = overgrowth", fill=(0, 0, 0))
         im.save(DOCS / f"lindenborg_plan_{'ground' if floor == 0 else 'first'}.png")
     print("previews written to Docs/")
 

@@ -20,6 +20,10 @@ AMSLookManager::AMSLookManager()
 void AMSLookManager::BeginPlay()
 {
 	Super::BeginPlay();
+	if (UMSDataSubsystem* Data = UMSDataSubsystem::Get(this))
+	{
+		Data->SetActiveLookRow(LookRow);
+	}
 	ApplyBaseGrade();
 }
 

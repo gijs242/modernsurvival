@@ -44,9 +44,13 @@ void AMSGameMode::StartPlay()
 	{
 		UE_LOG(LogMS, Warning, TEXT("No MSSpawnPoint actors in this map: enemies will spawn at random navmesh points out of view."));
 	}
-	FActorSpawnParameters Params;
-	Params.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
-	World->SpawnActor<AMSLookManager>(AMSLookManager::StaticClass(), FTransform::Identity, Params);
+	// Maps can place their own look manager (e.g. Lindenborg uses the "Abandoned" grade).
+	if (!TActorIterator<AMSLookManager>(World))
+	{
+		FActorSpawnParameters Params;
+		Params.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+		World->SpawnActor<AMSLookManager>(AMSLookManager::StaticClass(), FTransform::Identity, Params);
+	}
 
 	const UMSDataSubsystem* Data = UMSDataSubsystem::Get(this);
 	const FMSGameRulesRow& Rules = Data->GetRules();

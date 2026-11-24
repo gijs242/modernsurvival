@@ -13,7 +13,8 @@ You have regenerating health, sprint, slide and aim-down-sights, plus one last s
 Maps:
 - **Test Range**: grey-box arena for tuning.
 - **Lindenborg**: the real rsg de Borgen school building in Leek (NL), at true scale from public
-  3D BAG / AHN / BGT data, grey-boxed.
+  3D BAG / AHN / BGT data. It is grey-boxed and dressed as an abandoned, war-damaged site
+  (`Tools/lindenborg_ruin.py`; use `--intact` for the clean building).
 
 > **Status:** written without access to Unreal Engine. The engine-free rules and the data are
 > tested in CI, but the C++ has not been compiled yet. Start with

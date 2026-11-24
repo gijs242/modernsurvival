@@ -3,6 +3,7 @@
 #include "Look/MSLookManager.h"
 #include "Player/MSPlayerController.h"
 #include "Engine/World.h"
+#include "EngineUtils.h"
 #include "GameFramework/SpectatorPawn.h"
 
 AMSMenuGameMode::AMSMenuGameMode()
@@ -15,7 +16,10 @@ AMSMenuGameMode::AMSMenuGameMode()
 void AMSMenuGameMode::StartPlay()
 {
 	Super::StartPlay();
-	FActorSpawnParameters Params;
-	Params.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
-	GetWorld()->SpawnActor<AMSLookManager>(AMSLookManager::StaticClass(), FTransform::Identity, Params);
+	if (!TActorIterator<AMSLookManager>(GetWorld()))
+	{
+		FActorSpawnParameters Params;
+		Params.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+		GetWorld()->SpawnActor<AMSLookManager>(AMSLookManager::StaticClass(), FTransform::Identity, Params);
+	}
 }

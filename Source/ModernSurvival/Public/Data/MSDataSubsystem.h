@@ -38,7 +38,10 @@ public:
 	const FMSGameRulesRow& GetRules() const;
 	const FMSShopItemRow* FindShopItem(FName Row) const;
 	const FMSEquipmentRow& GetEquipment(FName Row) const;
+	/** The active look row (set by the map's AMSLookManager), falling back to "Default". */
 	const FMSLookRow& GetLook() const;
+	void SetActiveLookRow(FName Row) { ActiveLookRow = Row.IsNone() ? FName(TEXT("Default")) : Row; }
+	FName GetActiveLookRow() const { return ActiveLookRow; }
 	const FMSAcousticRow& GetAcoustics(FName Row) const;
 
 	/** All shop rows of a category, sorted by SortOrder then price. */
@@ -66,5 +69,6 @@ private:
 	UPROPERTY(Transient) TObjectPtr<UCurveTable> Curves;
 
 	int32 LastAuthoredWave = 0;
+	FName ActiveLookRow = TEXT("Default");
 	mutable TSet<FString> WarnedMissing;
 };

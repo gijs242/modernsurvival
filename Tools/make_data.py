@@ -304,7 +304,14 @@ EQUIPMENT = {
                        ExplosionSound=A.format("explosion")),
 }
 
-LOOK = {"Default": {}}
+LOOK = {
+    "Default": {},
+    # Lindenborg: abandoned, dusty, war-torn. Flatter colour, sickly green-grey shadows, more grain.
+    "Abandoned": dict(Saturation=0.52, Contrast=1.24, ShadowsContrast=1.15, HighlightsGain=1.0,
+                      ShadowTint=(0.9, 0.98, 0.94), HighlightTint=(1.05, 1.0, 0.88), WhiteTemp=5600,
+                      FilmGrainIntensity=0.32, FilmGrainShadows=0.55, VignetteIntensity=0.62, BloomIntensity=0.65,
+                      ChromaticAberration=0.22, ExposureBias=-0.35, LowHealthDesaturate=0.7),
+}
 
 ACOUSTICS = {
     "Outdoor": dict(SmallRoomMaxDistance=700, EnclosedMinHitFraction=0.6, ProbeDistance=3000, ProbeInterval=0.25,

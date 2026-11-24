@@ -273,7 +273,11 @@ const FMSEquipmentRow& UMSDataSubsystem::GetEquipment(FName Row) const
 const FMSLookRow& UMSDataSubsystem::GetLook() const
 {
 	static const FMSLookRow Defaults;
-	const FMSLookRow* Row = FindRowIn<FMSLookRow>(MSDataKeys::LookFeel, "Default");
+	const FMSLookRow* Row = ActiveLookRow != "Default" ? FindRowIn<FMSLookRow>(MSDataKeys::LookFeel, ActiveLookRow) : nullptr;
+	if (!Row)
+	{
+		Row = FindRowIn<FMSLookRow>(MSDataKeys::LookFeel, "Default");
+	}
 	return Row ? *Row : Defaults;
 }
 
