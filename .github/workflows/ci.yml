@@ -1,0 +1,24 @@
+# Checks that run without Unreal Engine (GitHub runners don't have it):
+#  - engine-free gameplay rules (Source/ModernSurvival/Public/Core/MSRules.h) unit tests
+#  - tuning CSVs match the C++ row structs and cross-reference each other
+#  - editor Python script parses
+# Compile + automation tests + play-test need a machine with UE 5.8: see NOTES_FOR_ME.md.
+name: checks
+on: [push, pull_request]
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Rules unit tests
+        run: |
+          mkdir -p Tests/build
+          g++ -std=c++20 -O1 -Wall -Wextra -Werror -Wshadow -Wconversion -Wno-sign-conversion \
+              -I Source/ModernSurvival/Public Tests/Rules/rules_test.cpp -o Tests/build/rules_test
+          Tests/build/rules_test
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - name: Data tables
+        run: python Tools/make_data.py --check
+      - name: Editor script syntax
+        run: python -c "import ast; ast.parse(open('Scripts/setup_project.py').read())"

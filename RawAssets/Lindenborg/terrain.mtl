@@ -1,0 +1,15 @@
+newmtl MAT_grass
+Kd 0.18 0.24 0.12
+
+newmtl MAT_road
+Kd 0.09 0.09 0.09
+
+newmtl MAT_paving
+Kd 0.32 0.3 0.28
+
+newmtl MAT_water
+Kd 0.05 0.08 0.1
+
+newmtl MAT_parking
+Kd 0.2 0.2 0.2
+

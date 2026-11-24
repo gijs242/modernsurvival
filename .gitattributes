@@ -1,0 +1,6 @@
+# Unreal binary assets: use Git LFS once you add Megascans / Fab content
+*.uasset filter=lfs diff=lfs merge=lfs -text
+*.umap filter=lfs diff=lfs merge=lfs -text
+*.glb binary
+*.wav binary
+*.obj text eol=lf
