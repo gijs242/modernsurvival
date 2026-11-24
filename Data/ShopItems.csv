@@ -1,0 +1,18 @@
+---,DisplayName,Description,Category,Kind,WeaponRow,EquipmentRow,Price,UnlockWave,Quantity,SortOrder
+Buy_Sentinel,Sentinel .45,"Heavy pistol. Hits hard, small magazine.",Weapons,Weapon,Pistol_Sentinel,None,500,1,1,10
+Buy_Viper,Viper SMG,Fast-firing SMG for close quarters.,Weapons,Weapon,SMG_Viper,None,1000,1,1,20
+Buy_Breacher,Breacher Pump,Pump shotgun. Devastating up close.,Weapons,Weapon,Shotgun_Breacher,None,1250,2,1,30
+Buy_Kestrel,Kestrel Carbine,All-round assault rifle.,Weapons,Weapon,AR_Kestrel,None,1500,1,1,40
+Buy_Brigand,Brigand Rifle,Harder-hitting rifle with stronger recoil.,Weapons,Weapon,AR_Brigand,None,1750,3,1,50
+Buy_Bolt,Bolt-Action Rifle,"One shot, one kill. Scoped.",Weapons,Weapon,Rifle_Bolt,None,2000,3,1,60
+Buy_Ranger,Ranger Battle Rifle,Full-power rifle. Kicks like a mule.,Weapons,Weapon,BR_Ranger,None,2250,4,1,70
+Buy_Longbow,Longbow Marksman,Semi-auto marksman rifle.,Weapons,Weapon,Sniper_Longbow,None,2500,5,1,80
+Buy_Hammer,Hammer LMG,100-round belt. Holds a corridor on its own.,Weapons,Weapon,LMG_Hammer,None,3000,6,1,90
+Buy_Thumper,Thumper Launcher,Rockets. The answer to helicopters and juggernauts.,Weapons,Weapon,Launcher_Thumper,None,3500,8,1,100
+Buy_Ammo,Refill Ammo,Fills reserve ammo for the weapon in your hands.,Weapons,Ammo,None,None,0,1,1,0
+Buy_Armor,Body Armor,Absorbs most incoming damage until it breaks.,Equipment,Armor,None,Armor,1000,2,1,10
+Buy_Frags,Frag Grenades x2,"Hold G to cook, release to throw.",Equipment,FragGrenades,None,Frag,300,1,2,20
+Buy_Claymores,Claymores x2,Directional mines. Face them where enemies come from.,Equipment,Claymores,None,Claymore,500,2,2,30
+Buy_Sentry,Sentry Gun,Automated turret. Place it with F.,Equipment,Sentry,None,Sentry,3000,5,1,40
+Buy_Airstrike,Airstrike,Mark a spot. A bombing run walks across it.,AirSupport,Airstrike,None,Airstrike,3000,4,1,10
+Buy_Squad,AI Squad,Two soldiers who follow you and fight.,AirSupport,AISquad,None,AISquad,4000,6,1,20

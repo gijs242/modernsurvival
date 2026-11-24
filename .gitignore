@@ -1,9 +1,23 @@
-# Godot
-.godot/
-*.translation
-export_presets.cfg.bak
-/build/
-/export/
-.DS_Store
-# raw downloads for tools/build_liekeblom.py and tools/fetch_weapons.py
-/build/
+# Unreal
+Binaries/
+DerivedDataCache/
+Intermediate/
+Saved/
+Build/
+.vs/
+.vscode/
+.idea/
+*.sln
+*.suo
+*.opensdf
+*.sdf
+*.VC.db
+*.VC.opendb
+Platforms/
+Plugins/*/Binaries/
+Plugins/*/Intermediate/
+# local tool output
+Tests/build/
+__pycache__/
+*.pyc
+Tools/.cache/
